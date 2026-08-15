@@ -15,6 +15,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { toOpenAIProviderTools } from "../utils/provider-tools.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
@@ -300,11 +301,14 @@ function buildParams(
 		params.temperature = options?.temperature;
 	}
 
-	if (context.tools && context.tools.length > 0) {
-		params.tools = convertResponsesTools(context.tools, {
-			supportsStrictMode: model.compat?.supportsStrictMode ?? true,
-			supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
-		});
+	if (context.tools?.length || context.providerTools?.length) {
+		params.tools = [
+			...convertResponsesTools(context.tools ?? [], {
+				supportsStrictMode: model.compat?.supportsStrictMode ?? true,
+				supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
+			}),
+			...toOpenAIProviderTools(context.providerTools ?? []),
+		] as ResponseCreateParamsStreaming["tools"];
 	}
 
 	if (model.reasoning) {

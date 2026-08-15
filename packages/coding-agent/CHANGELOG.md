@@ -5,6 +5,7 @@
 ### Added
 
 - Added `outputPadY` to configure vertical padding for user, assistant, custom, and tool messages, including extension message renderers.
+- Added `pi.registerProviderTool()` for provider-executed web search without a nested model call, plus synchronous `provider_event` extension observers for native search and citation metadata.
 
 ### Fixed
 

@@ -2551,6 +2551,7 @@ export class AgentSession {
 		}
 
 		this.setActiveToolsByName([...new Set(nextActiveToolNames)]);
+		this.agent.state.providerTools = this._extensionRunner.getAllProviderTools();
 	}
 
 	private _buildRuntime(options: {

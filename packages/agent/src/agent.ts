@@ -69,6 +69,7 @@ function createMutableAgentState(
 	initialState?: Partial<Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">>,
 ): MutableAgentState {
 	let tools = initialState?.tools?.slice() ?? [];
+	let providerTools = initialState?.providerTools?.slice() ?? [];
 	let messages = initialState?.messages?.slice() ?? [];
 
 	return {
@@ -80,6 +81,12 @@ function createMutableAgentState(
 		},
 		set tools(nextTools: AgentTool<any>[]) {
 			tools = nextTools.slice();
+		},
+		get providerTools() {
+			return providerTools;
+		},
+		set providerTools(nextTools) {
+			providerTools = nextTools.slice();
 		},
 		get messages() {
 			return messages;
@@ -439,6 +446,7 @@ export class Agent {
 			systemPrompt: this._state.systemPrompt,
 			messages: this._state.messages.slice(),
 			tools: this._state.tools.slice(),
+			providerTools: this._state.providerTools.slice(),
 		};
 	}
 

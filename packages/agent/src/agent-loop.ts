@@ -299,6 +299,7 @@ async function streamAssistantResponse(
 		systemPrompt: context.systemPrompt,
 		messages: llmMessages,
 		tools: context.tools,
+		providerTools: context.providerTools,
 	};
 
 	// Resolve API key (important for expiring tokens)

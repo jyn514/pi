@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added provider-executed tools to agent state and model request contexts without routing them through the local tool executor.
+
 ## [0.84.2] - 2026-08-14
 
 ### Fixed
