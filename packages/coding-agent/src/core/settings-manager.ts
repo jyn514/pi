@@ -1405,6 +1405,17 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getOutputPadY(): 0 | 1 {
+		const value = this.settings.outputPadY;
+		return value === 0 || value === 1 ? value : SETTINGS_DEFAULTS.outputPadY;
+	}
+
+	setOutputPadY(padding: 0 | 1): void {
+		this.globalSettings.outputPadY = padding;
+		this.markModified("outputPadY");
+		this.save();
+	}
+
 	getAutocompleteMaxVisible(): number {
 		return this.settings.autocompleteMaxVisible ?? SETTINGS_DEFAULTS.autocompleteMaxVisible;
 	}

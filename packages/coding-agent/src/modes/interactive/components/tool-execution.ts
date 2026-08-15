@@ -26,6 +26,7 @@ export interface ToolExecutionOptions {
 	showImages?: boolean;
 	imageWidthCells?: number;
 	outputPad?: number;
+	outputPadY?: 0 | 1;
 }
 
 export class ToolExecutionComponent extends Container {
@@ -48,6 +49,7 @@ export class ToolExecutionComponent extends Container {
 	private showImages: boolean;
 	private imageWidthCells: number;
 	private outputPad: number;
+	private outputPadY: 0 | 1;
 	private isPartial = true;
 	private toolDefinition?: ToolRenderers;
 	private ui: TUI;
@@ -79,17 +81,21 @@ export class ToolExecutionComponent extends Container {
 		this.showImages = options.showImages ?? true;
 		this.imageWidthCells = options.imageWidthCells ?? 60;
 		this.outputPad = options.outputPad ?? 1;
+		this.outputPadY = options.outputPadY ?? 1;
 		this.ui = ui;
 		this.cwd = cwd;
 
-		this.addChild(new Spacer(1));
+		if (this.outputPadY > 0) {
+			this.addChild(new Spacer(this.outputPadY));
+		}
 
 		// Always create all shell variants. contentBox is used for default renderer-based composition.
 		// selfRenderContainer is used when the tool renders its own framing.
 		// contentText is reserved for generic fallback rendering when no tool definition exists.
-		this.contentBox = new Box(1, 1, (text: string) => theme.bg("toolPendingBg", text));
-		this.contentText = new Text("", 1, 1, (text: string) => theme.bg("toolPendingBg", text));
+		this.contentBox = new Box(1, this.outputPadY, (text: string) => theme.bg("toolPendingBg", text));
+		this.contentText = new Text("", 1, this.outputPadY, (text: string) => theme.bg("toolPendingBg", text));
 		this.contentTextRegion = this.createResultRegion(this.contentText);
+
 		this.selfRenderContainer = new Container();
 
 		if (this.hasRendererDefinition()) {
@@ -133,6 +139,7 @@ export class ToolExecutionComponent extends Container {
 			isPartial: this.isPartial,
 			expanded: this.expanded,
 			showImages: this.showImages,
+			outputPadY: this.outputPadY,
 			isError: this.result?.isError ?? false,
 			durationMs: this.isPartial ? undefined : this.result?.durationMs,
 			outputPad: this.outputPad,
@@ -238,7 +245,9 @@ export class ToolExecutionComponent extends Container {
 
 			const lines: string[] = [];
 			if (contentLines.length > 0) {
-				lines.push("");
+				if (this.outputPadY > 0) {
+					lines.push("");
+				}
 				lines.push(...contentLines);
 			}
 			for (let i = 0; i < this.imageComponents.length; i++) {
@@ -259,10 +268,10 @@ export class ToolExecutionComponent extends Container {
 
 	override handleMouse(event: TuiMouseEvent): ReturnType<Container["handleMouse"]> {
 		if (!this.hasRendererDefinition() || this.getRenderShell() !== "self") return super.handleMouse(event);
-		if (event.y <= 0 || event.y > this.selfRenderHeight) return undefined;
+		if (event.y < this.outputPadY || event.y >= this.selfRenderHeight + this.outputPadY) return undefined;
 		return this.selfRenderContainer.handleMouse({
 			...event,
-			y: event.y - 1,
+			y: event.y - this.outputPadY,
 			height: this.selfRenderHeight,
 		});
 	}
@@ -354,7 +363,7 @@ export class ToolExecutionComponent extends Container {
 			const caps = getCapabilities();
 			for (const img of imageBlocks) {
 				if (caps.images && this.showImages && img.data && img.mimeType) {
-					const spacer = new Spacer(1);
+					const spacer = new Spacer(this.outputPadY);
 					this.addChild(spacer);
 					this.imageSpacers.push(spacer);
 					const source = { data: img.data, mimeType: img.mimeType, widthCells: this.imageWidthCells };

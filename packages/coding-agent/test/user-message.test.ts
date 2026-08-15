@@ -24,6 +24,16 @@ describe("UserMessageComponent", () => {
 		expect(lines[2].endsWith(BG_RESET)).toBe(true);
 	});
 
+	test("uses configured vertical output padding", () => {
+		initTheme("dark");
+
+		const padded = new UserMessageComponent("hello");
+		const compact = new UserMessageComponent("hello", undefined, 1, [], 0);
+
+		expect(padded.render(20)).toHaveLength(3);
+		expect(compact.render(20)).toHaveLength(1);
+	});
+
 	test("chains Markdown transformers with user message context", () => {
 		initTheme("dark");
 		const calls: string[] = [];

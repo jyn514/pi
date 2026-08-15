@@ -7,6 +7,7 @@
  */
 
 import { Container, Spacer, Text } from "@earendil-works/pi-tui";
+import type { TSchema } from "typebox";
 import { keyHint } from "../../../modes/interactive/components/keybinding-hints.ts";
 import { VisualLinePreview } from "../../../modes/interactive/components/visual-truncate.ts";
 import { theme } from "../../../modes/interactive/theme/theme.ts";
@@ -17,6 +18,9 @@ import { DEFAULT_MAX_BYTES, formatSize } from "../truncate.ts";
 
 const BASH_PREVIEW_LINES = 5;
 export const BASH_UPDATE_THROTTLE_MS = 100;
+
+export type BashRenderState = Parameters<typeof startToolTimer>[0]["state"];
+
 function formatShellCall(args: { command?: string; timeout?: number } | undefined, prompt: string): string {
 	const command = str(args?.command);
 	const timeout = args?.timeout as number | undefined;
@@ -32,11 +36,12 @@ function rebuildBashResultRenderComponent(
 	},
 	options: ToolRenderResultOptions,
 	showImages: boolean,
+	outputPadY: 0 | 1,
 	timerText: string | undefined,
 ): void {
 	component.clear();
 
-	let output = getTextOutput(result as any, showImages).trim();
+	let output = getTextOutput(result, showImages).trim();
 	const truncation = result.details?.truncation;
 	const fullOutputPath = result.details?.fullOutputPath;
 	if (!options.isPartial && truncation?.truncated && fullOutputPath && output.endsWith("]")) {
@@ -53,9 +58,11 @@ function rebuildBashResultRenderComponent(
 			.join("\n");
 
 		if (options.expanded) {
-			component.addChild(new Text(`\n${styledOutput}`, 0, 0));
+			component.addChild(new Text(`${outputPadY > 0 ? "\n" : ""}${styledOutput}`, 0, 0));
 		} else {
-			component.addChild(new Spacer(1));
+			if (outputPadY > 0) {
+				component.addChild(new Spacer(outputPadY));
+			}
 			component.addChild(
 				new VisualLinePreview({
 					text: styledOutput,
@@ -83,14 +90,20 @@ function rebuildBashResultRenderComponent(
 				);
 			}
 		}
-		component.addChild(new Text(`\n${theme.fg("warning", `[${warnings.join(". ")}]`)}`, 0, 0));
+		component.addChild(
+			new Text(`${outputPadY > 0 ? "\n" : ""}${theme.fg("warning", `[${warnings.join(". ")}]`)}`, 0, 0),
+		);
 	}
 
-	if (timerText) component.addChild(new Text(`\n${theme.fg("muted", timerText)}`, 0, 0));
+	if (timerText) {
+		component.addChild(new Text(`${outputPadY > 0 ? "\n" : ""}${theme.fg("muted", timerText)}`, 0, 0));
+	}
 }
 
 /** Shell renderers are shared by bash and powershell, which differ only in the prompt they display. */
-export function createShellRenderers(prompt: string): Pick<ToolDefinition<any, any>, "renderCall" | "renderResult"> {
+export function createShellRenderers(
+	prompt: string,
+): Pick<ToolDefinition<TSchema, BashToolDetails | undefined, BashRenderState>, "renderCall" | "renderResult"> {
 	return {
 		renderCall(args, _theme, context) {
 			startToolTimer(context);
@@ -101,7 +114,7 @@ export function createShellRenderers(prompt: string): Pick<ToolDefinition<any, a
 		renderResult(result, options, _theme, context) {
 			const timerText = toolTimerText(context, options.isPartial);
 			const component = (context.lastComponent as Container | undefined) ?? new Container();
-			rebuildBashResultRenderComponent(component, result as any, options, context.showImages, timerText);
+			rebuildBashResultRenderComponent(component, result, options, context.showImages, context.outputPadY, timerText);
 			component.invalidate();
 			return component;
 		},

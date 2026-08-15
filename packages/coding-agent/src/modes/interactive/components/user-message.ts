@@ -14,6 +14,7 @@ export class UserMessageComponent extends Container {
 	private text: string;
 	private markdownTheme: MarkdownTheme;
 	private outputPad: number;
+	private outputPadY: 0 | 1;
 	private markdownTransformers: readonly MarkdownTransformer[];
 
 	constructor(
@@ -21,17 +22,24 @@ export class UserMessageComponent extends Container {
 		markdownTheme: MarkdownTheme = getMarkdownTheme(),
 		outputPad = 1,
 		markdownTransformers: readonly MarkdownTransformer[] = [],
+		outputPadY: 0 | 1 = 1,
 	) {
 		super();
 		this.text = text;
 		this.markdownTheme = markdownTheme;
 		this.outputPad = outputPad;
+		this.outputPadY = outputPadY;
 		this.markdownTransformers = markdownTransformers;
 		this.rebuild();
 	}
 
 	setOutputPad(padding: number): void {
 		this.outputPad = padding;
+		this.rebuild();
+	}
+
+	setOutputPadY(padding: 0 | 1): void {
+		this.outputPadY = padding;
 		this.rebuild();
 	}
 
@@ -43,7 +51,7 @@ export class UserMessageComponent extends Container {
 			new Markdown(
 				this.text,
 				this.outputPad,
-				1,
+				this.outputPadY,
 				this.markdownTheme,
 				{
 					color: (content: string) => theme.fg("userMessageText", content),

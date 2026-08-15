@@ -216,6 +216,18 @@ describe("generated configuration schemas", () => {
 		).toBe(true);
 	});
 
+	it("describes supported vertical output padding values and the runtime default", () => {
+		const schema = JSON.parse(renderConfigSchemas().get("schemas/settings.schema.json") ?? "");
+		const validator = Compile(schema);
+		for (const outputPadY of [0, 1]) {
+			expect(validator.Check({ outputPadY })).toBe(true);
+		}
+		for (const outputPadY of [-1, 0.5, 2]) {
+			expect(validator.Check({ outputPadY })).toBe(false);
+		}
+		expect(schema.properties.outputPadY.default).toBe(SettingsManager.inMemory().getOutputPadY());
+	});
+
 	it("describes legacy settings migrations accurately", () => {
 		const schema = JSON.parse(renderConfigSchemas().get("schemas/settings.schema.json") ?? "") as {
 			properties: {

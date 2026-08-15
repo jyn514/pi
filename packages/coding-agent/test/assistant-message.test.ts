@@ -45,6 +45,46 @@ describe("AssistantMessageComponent", () => {
 		expect(lines[lines.length - 1].startsWith(OSC133_ZONE_END + OSC133_ZONE_FINAL)).toBe(true);
 	});
 
+	test("uses configured vertical output padding", () => {
+		initTheme("dark");
+		const message = createAssistantMessage([{ type: "text", text: "hello" }]);
+		const padded = new AssistantMessageComponent(message);
+		const compact = new AssistantMessageComponent(message, false, undefined, "Thinking...", 1, [], 0);
+
+		expect(padded.render(40)).toHaveLength(2);
+		expect(compact.render(40)).toHaveLength(1);
+	});
+
+	test("removes spacing between thinking summaries and text in compact mode", () => {
+		initTheme("dark");
+		const message = createAssistantMessage([
+			{ type: "thinking", thinking: "first summary" },
+			{ type: "thinking", thinking: "second summary" },
+			{ type: "text", text: "answer" },
+		]);
+		const component = new AssistantMessageComponent(message, false, undefined, "Thinking...", 1, [], 0);
+		const lines = component.render(80).map((line) => stripAnsi(line));
+
+		expect(lines).toHaveLength(3);
+		expect(lines[0]).toContain("first summary");
+		expect(lines[1]).toContain("second summary");
+		expect(lines[2]).toContain("answer");
+	});
+
+	test("compacts thinking paragraph breaks when vertical padding is disabled", () => {
+		initTheme("dark");
+		const message = createAssistantMessage([{ type: "thinking", thinking: "first paragraph\n\nsecond paragraph" }]);
+		const compact = new AssistantMessageComponent(message, false, undefined, "Thinking...", 1, [], 0);
+		const lines = compact.render(80).map((line) => stripAnsi(line));
+
+		expect(lines).toHaveLength(2);
+		expect(lines[0]).toContain("first paragraph");
+		expect(lines[1]).toContain("second paragraph");
+
+		const padded = new AssistantMessageComponent(message);
+		expect(padded.render(80)).toHaveLength(4);
+	});
+
 	test("does not add OSC 133 zone markers when assistant message contains tool calls", () => {
 		initTheme("dark");
 
@@ -121,10 +161,24 @@ describe("AssistantMessageComponent", () => {
 		};
 		expect(component.handleMouse(event)?.handled).toBe(true);
 
-		const collapsed = stripAnsi(component.render(width).join("\n"));
+		const collapsedLines = component.render(width);
+		const collapsed = stripAnsi(collapsedLines.join("\n"));
 		expect(collapsed).not.toContain("first reasoning");
 		expect(collapsed).toContain("Thinking...");
 		expect(collapsed).toContain("second reasoning");
+
+		const hiddenThinkingRow = collapsedLines.findIndex((line) => stripAnsi(line).includes("Thinking..."));
+		const expandEvent: TuiMouseEvent = {
+			...event,
+			y: hiddenThinkingRow,
+			screenY: hiddenThinkingRow,
+			height: collapsedLines.length,
+		};
+		expect(component.handleMouse(expandEvent)?.handled).toBe(true);
+
+		const expanded = stripAnsi(component.render(width).join("\n"));
+		expect(expanded).toContain("first reasoning");
+		expect(expanded).toContain("second reasoning");
 	});
 
 	test("uses configured output padding for text and thinking", () => {

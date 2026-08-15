@@ -374,6 +374,12 @@ export const SettingsSchema = Type.Object(
 				default: SETTINGS_DEFAULTS.outputPad,
 			}),
 		),
+		outputPadY: Type.Optional(
+			Type.Union([Type.Literal(0), Type.Literal(1)], {
+				description: "Vertical padding for chat message output.",
+				default: SETTINGS_DEFAULTS.outputPadY,
+			}),
+		),
 		autocompleteMaxVisible: Type.Optional(
 			Type.Number({
 				description: "Maximum visible items in the autocomplete dropdown.",
