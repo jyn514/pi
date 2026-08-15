@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `outputPadY` to configure vertical padding for user, assistant, custom, and tool messages, including extension message renderers.
+
 ### Fixed
 
 - Fixed Z.AI Coding Plan defaults referencing the removed GLM-5.1 model ([#8096](https://github.com/earendil-works/pi/issues/8096)).
