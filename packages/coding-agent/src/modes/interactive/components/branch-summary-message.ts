@@ -11,11 +11,18 @@ export class BranchSummaryMessageComponent extends Box {
 	private expanded = false;
 	private message: BranchSummaryMessage;
 	private markdownTheme: MarkdownTheme;
+	private outputPadY: 0 | 1;
 
-	constructor(message: BranchSummaryMessage, markdownTheme: MarkdownTheme = getMarkdownTheme(), outputPad = 1) {
-		super(outputPad, 1, (t) => theme.bg("customMessageBg", t));
+	constructor(
+		message: BranchSummaryMessage,
+		markdownTheme: MarkdownTheme = getMarkdownTheme(),
+		outputPad = 1,
+		outputPadY: 0 | 1 = 1,
+	) {
+		super(outputPad, outputPadY, (text) => theme.bg("customMessageBg", text));
 		this.message = message;
 		this.markdownTheme = markdownTheme;
+		this.outputPadY = outputPadY;
 		this.updateDisplay();
 	}
 
@@ -39,10 +46,12 @@ export class BranchSummaryMessageComponent extends Box {
 
 		const label = theme.fg("customMessageLabel", `\x1b[1m[branch]\x1b[22m`);
 		content.addChild(new Text(label, 0, 0));
-		content.addChild(new Spacer(1));
+		if (this.outputPadY > 0) {
+			content.addChild(new Spacer(this.outputPadY));
+		}
 
 		if (this.expanded) {
-			const header = "**Branch Summary**\n\n";
+			const header = `**Branch Summary**${this.outputPadY > 0 ? "\n\n" : "  \n"}`;
 			content.addChild(
 				new Markdown(header + this.message.summary, 0, 0, this.markdownTheme, {
 					color: (text: string) => theme.fg("customMessageText", text),
