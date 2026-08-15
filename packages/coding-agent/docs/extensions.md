@@ -684,6 +684,18 @@ pi.on("context", async (event, ctx) => {
 });
 ```
 
+#### provider_event
+
+Fired synchronously for each parsed provider-native response event. This is intended for features such as web-search citations that are not part of Pi's normalized assistant message. The event is transient; persist any derived data explicitly with `pi.sendMessage()` or `pi.appendEntry()` after the turn.
+
+```typescript
+pi.on("provider_event", ({ event }) => {
+  // event.provider, event.api, event.model, event.type, event.payload
+});
+```
+
+Handlers must be synchronous because they run inside provider stream parsing. Throwing reports an extension error without stopping other observers.
+
 #### before_provider_headers
 
 Fired after the outgoing HTTP headers are assembled. Use it to add, override, or remove request headers.
@@ -1412,6 +1424,20 @@ pi.registerTool({
   renderResult(result, options, theme, context) { ... },
 });
 ```
+
+### pi.registerProviderTool(tool)
+
+Register a tool that the active model provider executes inside the model request. Unlike `registerTool()`, provider tools have no local `execute()` callback and do not create agent tool-result messages. The provider's native events remain available through the provider event observer.
+
+```typescript
+pi.registerProviderTool({
+  type: "web_search",
+  allowedDomains: ["rust-lang.org"],
+  searchContextSize: "high",
+});
+```
+
+Pi maps web search to Anthropic, OpenAI Responses (including Azure and Codex), and Google Generative AI/Vertex request formats. Provider support and individual options vary. Unsupported options are ignored; unsupported provider APIs reject or ignore the tool according to their normal behavior.
 
 ### pi.sendMessage(message, options?)
 

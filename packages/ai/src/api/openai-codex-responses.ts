@@ -33,6 +33,7 @@ import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { emitProviderEvent } from "../utils/provider-event.ts";
+import { toOpenAIProviderTools } from "../utils/provider-tools.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -568,12 +569,15 @@ function buildRequestBody(
 		body.service_tier = options.serviceTier;
 	}
 
-	if (toolPlacement.immediate.length > 0) {
-		body.tools = convertResponsesTools(toolPlacement.immediate, {
-			strict: null,
-			supportsStrictMode,
-			supportsOpenAIGrammarTools,
-		});
+	if (toolPlacement.immediate.length > 0 || context.providerTools?.length) {
+		body.tools = [
+			...convertResponsesTools(toolPlacement.immediate, {
+				strict: null,
+				supportsStrictMode,
+				supportsOpenAIGrammarTools,
+			}),
+			...toOpenAIProviderTools(context.providerTools ?? []),
+		] as OpenAITool[];
 	}
 
 	if (options?.reasoningEffort !== undefined) {

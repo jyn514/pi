@@ -7,6 +7,7 @@ import type {
 	ImageContent,
 	Message,
 	Model,
+	ProviderTool,
 	SimpleStreamOptions,
 	TextContent,
 	Tool,
@@ -338,9 +339,12 @@ export interface AgentState {
 	model: Model<any>;
 	/** Requested reasoning level for future turns. */
 	thinkingLevel: ThinkingLevel;
-	/** Available tools. Assigning a new array copies the top-level array. */
+	/** Available locally executed tools. Assigning a new array copies the top-level array. */
 	set tools(tools: AgentTool<any>[]);
 	get tools(): AgentTool<any>[];
+	/** Available provider-executed tools. Assigning a new array copies the top-level array. */
+	set providerTools(tools: ProviderTool[]);
+	get providerTools(): ProviderTool[];
 	/** Conversation transcript. Assigning a new array copies the top-level array. */
 	set messages(messages: AgentMessage[]);
 	get messages(): AgentMessage[];
@@ -415,8 +419,10 @@ export interface AgentContext {
 	systemPrompt: string;
 	/** Transcript visible to the model. */
 	messages: AgentMessage[];
-	/** Tools available for this run. */
+	/** Locally executed tools available for this run. */
 	tools?: AgentTool<any>[];
+	/** Provider-executed tools available for this run. */
+	providerTools?: ProviderTool[];
 }
 
 /**

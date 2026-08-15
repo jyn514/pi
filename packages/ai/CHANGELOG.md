@@ -5,6 +5,7 @@
 ### Added
 
 - Added an opt-in transient provider-event callback for observing native response events before Pi normalizes them.
+- Added first-class provider-executed web search tools for Anthropic, OpenAI Responses, Azure OpenAI Responses, OpenAI Codex, Google Generative AI, and Vertex AI.
 
 ## [0.84.4] - 2026-08-28
 

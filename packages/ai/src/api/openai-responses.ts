@@ -22,6 +22,7 @@ import { headersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { toOpenAIProviderTools } from "../utils/provider-tools.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -310,11 +311,14 @@ function buildParams(
 		params.service_tier = options.serviceTier;
 	}
 
-	if (toolPlacement.immediate.length > 0) {
-		params.tools = convertResponsesTools(toolPlacement.immediate, {
-			supportsStrictMode: compat.supportsStrictMode,
-			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
-		});
+	if (toolPlacement.immediate.length > 0 || context.providerTools?.length) {
+		params.tools = [
+			...convertResponsesTools(toolPlacement.immediate, {
+				supportsStrictMode: compat.supportsStrictMode,
+				supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
+			}),
+			...toOpenAIProviderTools(context.providerTools ?? []),
+		] as ResponseCreateParamsStreaming["tools"];
 	}
 
 	if (options?.toolChoice !== undefined) {

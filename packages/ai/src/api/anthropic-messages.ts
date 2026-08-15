@@ -37,6 +37,7 @@ import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { emitProviderEvent } from "../utils/provider-event.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { toAnthropicProviderTools } from "../utils/provider-tools.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
@@ -1040,7 +1041,7 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
-	if (immediateTools.length > 0 || deferredTools.length > 0) {
+	if (immediateTools.length > 0 || deferredTools.length > 0 || context.providerTools?.length) {
 		params.tools = [
 			...convertTools(
 				immediateTools,
@@ -1057,7 +1058,8 @@ function buildParams(
 				undefined,
 				true,
 			),
-		];
+			...toAnthropicProviderTools(context.providerTools ?? []),
+		] as Anthropic.Messages.Tool[];
 	}
 
 	// Configure thinking mode: adaptive, budget-based, or explicitly disabled.

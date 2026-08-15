@@ -29,6 +29,7 @@ import { providerHeadersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { emitProviderEvent } from "../utils/provider-event.ts";
+import { toGoogleProviderTools } from "../utils/provider-tools.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import type { GoogleApiThinkingLevel, ResolvedGoogleThinkingLevel } from "./google-shared.ts";
 import {
@@ -479,10 +480,12 @@ function buildParams(
 	const config: GenerateContentConfig = {
 		...(Object.keys(generationConfig).length > 0 && generationConfig),
 		...(context.systemPrompt && { systemInstruction: sanitizeSurrogates(context.systemPrompt) }),
-		...(context.tools &&
-			context.tools.length > 0 && {
-				tools: convertTools(context.tools, false, supportsStrictMode),
-			}),
+		...((context.tools?.length || context.providerTools?.length) && {
+			tools: [
+				...(convertTools(context.tools ?? [], false, supportsStrictMode) ?? []),
+				...toGoogleProviderTools(context.providerTools ?? []),
+			],
+		}),
 		...(functionCallingMode !== undefined && {
 			toolConfig: { functionCallingConfig: { mode: functionCallingMode } },
 		}),

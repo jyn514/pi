@@ -16,6 +16,8 @@ import { type Settings, SettingsManager } from "../src/core/settings-manager.ts"
 
 import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 
+const observedProviderEvents: unknown[] = [];
+
 describe("createAgentSession stream options", () => {
 	let tempDir: string;
 	let cwd: string;
@@ -30,6 +32,8 @@ describe("createAgentSession stream options", () => {
 	});
 
 	afterEach(() => {
+		observedProviderEvents.length = 0;
+		Reflect.deleteProperty(globalThis, "__piProviderEventObserver");
 		if (tempDir) {
 			rmSync(tempDir, { recursive: true, force: true });
 		}
@@ -79,6 +83,7 @@ describe("createAgentSession stream options", () => {
 		settings: Partial<Settings>,
 		requestOptions: SimpleStreamOptions = {},
 		extensionSource?: string,
+		emitProviderEvent = false,
 	): Promise<SimpleStreamOptions | undefined> {
 		const model = createModel(api);
 		const settingsManager = SettingsManager.inMemory(settings);
@@ -98,6 +103,15 @@ describe("createAgentSession stream options", () => {
 			headers: { "x-provider": "provider" },
 			streamSimple: (_model, _context, providerOptions) => {
 				capturedOptions = providerOptions;
+				if (emitProviderEvent) {
+					providerOptions?.onProviderEvent?.({
+						provider: model.provider,
+						api,
+						model: model.id,
+						type: "native.search",
+						payload: { query: "Rust" },
+					});
+				}
 				return createDoneStream(api);
 			},
 		});
@@ -168,6 +182,31 @@ describe("createAgentSession stream options", () => {
 
 		expect(options?.maxRetries).toBe(2);
 		expect(options?.maxRetryDelayMs).toBe(3000);
+	});
+
+	it("forwards native provider events to synchronous extension observers", async () => {
+		Object.assign(globalThis, {
+			__piProviderEventObserver: (event: unknown) => observedProviderEvents.push(event),
+		});
+		await captureStreamOptions(
+			"openai-responses",
+			{},
+			{},
+			`export default function (pi) {
+				pi.on("provider_event", ({ event }) => globalThis.__piProviderEventObserver(event));
+			}`,
+			true,
+		);
+
+		expect(observedProviderEvents).toEqual([
+			{
+				provider: "capture-provider",
+				api: "openai-responses",
+				model: "capture-model",
+				type: "native.search",
+				payload: { query: "Rust" },
+			},
+		]);
 	});
 
 	it("runs before_provider_headers on assembled headers without forwarding the transform", async () => {

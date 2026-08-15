@@ -538,10 +538,27 @@ export interface Tool<TParameters extends TSchema = TSchema> {
 	constrainedSampling?: false | ConstrainedSamplingConfig;
 }
 
+/** A tool executed by the model provider inside the model request. */
+export interface WebSearchProviderTool {
+	type: "web_search";
+	/** Restrict results to these domains when the provider supports domain filtering. */
+	allowedDomains?: string[];
+	/** Exclude these domains when the provider supports domain filtering. */
+	blockedDomains?: string[];
+	/** Maximum provider-side searches for APIs that expose such a limit. */
+	maxUses?: number;
+	/** Requested search context size for APIs that expose such a control. */
+	searchContextSize?: "low" | "medium" | "high";
+}
+
+export type ProviderTool = WebSearchProviderTool;
+
 export interface Context {
 	systemPrompt?: string;
 	messages: Message[];
 	tools?: Tool[];
+	/** Tools executed by the provider rather than by the local agent loop. */
+	providerTools?: ProviderTool[];
 }
 
 /**

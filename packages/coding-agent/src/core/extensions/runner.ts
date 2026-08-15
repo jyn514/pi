@@ -3,7 +3,7 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Model, Provider, ProviderHeaders } from "@earendil-works/pi-ai";
+import type { ImageContent, Model, Provider, ProviderEvent, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
@@ -508,6 +508,11 @@ export class ExtensionRunner {
 			}
 		}
 		return Array.from(toolsByName.values());
+	}
+
+	/** Get all provider-executed tools registered by extensions. */
+	getAllProviderTools() {
+		return this.extensions.flatMap((extension) => extension.providerTools ?? []);
 	}
 
 	/** Get a tool definition by name. Returns undefined if not found. */
@@ -1061,6 +1066,26 @@ export class ExtensionRunner {
 		}
 
 		return currentMessages;
+	}
+
+	emitProviderEvent(event: ProviderEvent): void {
+		const ctx = this.createContext();
+		for (const ext of this.extensions) {
+			const handlers = ext.handlers.get("provider_event");
+			if (!handlers) continue;
+			for (const handler of handlers) {
+				try {
+					handler({ type: "provider_event", event }, ctx);
+				} catch (err) {
+					this.emitError({
+						extensionPath: ext.path,
+						event: "provider_event",
+						error: err instanceof Error ? err.message : String(err),
+						stack: err instanceof Error ? err.stack : undefined,
+					});
+				}
+			}
+		}
 	}
 
 	async emitBeforeProviderRequest(payload: unknown): Promise<unknown> {

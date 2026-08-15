@@ -295,6 +295,13 @@ function createExtensionAPI(
 			runtime.refreshTools();
 		},
 
+		registerProviderTool(tool): void {
+			runtime.assertActive();
+			if (!extension.providerTools) extension.providerTools = [];
+			extension.providerTools.push(tool);
+			runtime.refreshTools();
+		},
+
 		registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void {
 			assertActive();
 			extension.commands.set(name, {
@@ -534,6 +541,7 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 		sourceInfo: createSyntheticSourceInfo(extensionPath, { source, baseDir }),
 		handlers: new Map(),
 		tools: new Map(),
+		providerTools: [],
 		messageRenderers: new Map(),
 		entryRenderers: new Map(),
 		commands: new Map(),
