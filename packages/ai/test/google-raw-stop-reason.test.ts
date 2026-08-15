@@ -79,7 +79,10 @@ vi.mock("@google/genai", () => {
 	};
 });
 
-import { stream as streamGoogleGenerativeAi } from "../src/api/google-generative-ai.ts";
+import {
+	stream as streamGoogleGenerativeAi,
+	streamSimple as streamSimpleGoogleGenerativeAi,
+} from "../src/api/google-generative-ai.ts";
 import { stream as streamGoogleVertex } from "../src/api/google-vertex.ts";
 import { getModel } from "../src/compat.ts";
 import type { Context } from "../src/types.ts";
@@ -89,6 +92,63 @@ const context: Context = {
 };
 
 describe("Google raw stop reasons", () => {
+	it("delivers native chunks before normalization and fails when the observer throws", async () => {
+		googleGenAiMock.finishReason = "STOP";
+		googleGenAiMock.includeFunctionCall = false;
+		const model = getModel("google", "gemini-2.5-flash");
+		const observed: unknown[] = [];
+
+		const message = await streamGoogleGenerativeAi(model, context, {
+			apiKey: "test-api-key",
+			onProviderEvent: (event) => observed.push(event),
+		}).result();
+
+		expect(message.stopReason).toBe("stop");
+		expect(observed).toEqual([
+			{
+				provider: "google",
+				api: "google-generative-ai",
+				model: model.id,
+				type: "chunk",
+				payload: expect.objectContaining({ responseId: "google-response-id" }),
+			},
+		]);
+
+		const simpleObserved: unknown[] = [];
+		const simpleMessage = await streamSimpleGoogleGenerativeAi(model, context, {
+			apiKey: "test-api-key",
+			onProviderEvent: (event) => simpleObserved.push(event),
+		}).result();
+		expect(simpleMessage.stopReason).toBe("stop");
+		expect(simpleObserved).toHaveLength(1);
+
+		const vertexModel = getModel("google-vertex", "gemini-3-flash-preview");
+		const vertexObserved: unknown[] = [];
+		const vertexMessage = await streamGoogleVertex(vertexModel, context, {
+			apiKey: "test-api-key",
+			onProviderEvent: (event) => vertexObserved.push(event),
+		}).result();
+		expect(vertexMessage.stopReason).toBe("stop");
+		expect(vertexObserved).toEqual([
+			{
+				provider: "google-vertex",
+				api: "google-vertex",
+				model: vertexModel.id,
+				type: "chunk",
+				payload: expect.objectContaining({ responseId: "google-response-id" }),
+			},
+		]);
+
+		const failed = await streamGoogleGenerativeAi(model, context, {
+			apiKey: "test-api-key",
+			onProviderEvent: () => {
+				throw new Error("observer failed");
+			},
+		}).result();
+		expect(failed.stopReason).toBe("error");
+		expect(failed.errorMessage).toContain("observer failed");
+	});
+
 	it("preserves raw Gemini finish reasons for Google Generative AI errors", async () => {
 		googleGenAiMock.finishReason = "MALFORMED_FUNCTION_CALL";
 		googleGenAiMock.includeFunctionCall = false;

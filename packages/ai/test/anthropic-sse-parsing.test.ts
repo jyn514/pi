@@ -79,6 +79,37 @@ function createFakeAnthropicClient(response: Response): Anthropic {
 }
 
 describe("Anthropic raw SSE parsing", () => {
+	it("delivers native events before normalization and fails when the observer throws", async () => {
+		const model = getModel("anthropic", "claude-haiku-4-5");
+		const context: Context = {
+			messages: [{ role: "user", content: "Say hello.", timestamp: Date.now() }],
+		};
+		const observed: unknown[] = [];
+		const result = await streamAnthropic(model, context, {
+			client: createFakeAnthropicClient(createSseResponse(minimalAnthropicEvents)),
+			onProviderEvent: (event) => observed.push(event),
+		}).result();
+
+		expect(result.stopReason).toBe("stop");
+		expect(observed).toHaveLength(minimalAnthropicEvents.length);
+		expect(observed[0]).toEqual({
+			provider: "anthropic",
+			api: "anthropic-messages",
+			model: model.id,
+			type: "message_start",
+			payload: expect.objectContaining({ type: "message_start" }),
+		});
+
+		const failed = await streamAnthropic(model, context, {
+			client: createFakeAnthropicClient(createSseResponse(minimalAnthropicEvents)),
+			onProviderEvent: () => {
+				throw new Error("observer failed");
+			},
+		}).result();
+		expect(failed.stopReason).toBe("error");
+		expect(failed.errorMessage).toContain("observer failed");
+	});
+
 	it("repairs malformed SSE JSON and malformed streamed tool JSON", async () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
 		const context: Context = {

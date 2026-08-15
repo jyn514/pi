@@ -23,6 +23,7 @@ import type {
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
+import { emitProviderEvent } from "../utils/provider-event.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import type { GoogleThinkingLevel } from "./google-shared.ts";
 import {
@@ -96,6 +97,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 			const blocks = output.content;
 			const blockIndex = () => blocks.length - 1;
 			for await (const chunk of googleStream) {
+				emitProviderEvent(options, model, chunk);
 				// @google/genai documents GenerateContentResponse.responseId as an output-only field
 				// used to identify each response. Keep the first non-empty one from the stream.
 				output.responseId ||= chunk.responseId;

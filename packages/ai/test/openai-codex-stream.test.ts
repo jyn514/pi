@@ -191,7 +191,12 @@ describe("openai-codex streaming", () => {
 			messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
 		};
 
-		const streamResult = streamOpenAICodexResponses(model, context, { apiKey: token, transport: "sse" });
+		const providerEvents: unknown[] = [];
+		const streamResult = streamOpenAICodexResponses(model, context, {
+			apiKey: token,
+			transport: "sse",
+			onProviderEvent: (event) => providerEvents.push(event),
+		});
 		let sawTextDelta = false;
 		let sawDone = false;
 
@@ -207,6 +212,14 @@ describe("openai-codex streaming", () => {
 
 		expect(sawTextDelta).toBe(true);
 		expect(sawDone).toBe(true);
+		expect(providerEvents).toHaveLength(5);
+		expect(providerEvents.at(-1)).toEqual({
+			provider: "openai-codex",
+			api: "openai-codex-responses",
+			model: model.id,
+			type: "response.completed",
+			payload: expect.objectContaining({ type: "response.completed" }),
+		});
 	});
 
 	it("completes after response.completed even when the SSE body stays open", async () => {

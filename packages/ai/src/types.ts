@@ -116,6 +116,18 @@ export interface ProviderResponse {
 	headers: Record<string, string>;
 }
 
+/**
+ * A parsed provider-native response event observed before Pi normalizes it.
+ * Events are transient and are not added to messages or persisted by Pi.
+ */
+export interface ProviderEvent {
+	provider: ProviderId;
+	api: Api;
+	model: string;
+	type: string;
+	payload: unknown;
+}
+
 /** Authentication, HTTP transport, and lifecycle callbacks shared by provider requests. */
 export interface ProviderRequestOptions<TModel = Model<Api>> {
 	signal?: AbortSignal;
@@ -143,6 +155,14 @@ export interface ProviderRequestOptions<TModel = Model<Api>> {
 	 * Optional callback invoked after an HTTP response is received.
 	 */
 	onResponse?: (response: ProviderResponse, model: TModel) => void | Promise<void>;
+	/**
+	 * Optional synchronous observer for parsed events from a provider's native response stream.
+	 * Payloads are provider-specific and may contain sensitive data. Pi does not persist them.
+	 * A callback exception fails the request.
+	 *
+	 * Providers that do not expose native stream events may ignore this option.
+	 */
+	onProviderEvent?: (event: ProviderEvent) => void;
 	/**
 	 * Optional custom HTTP headers to include in API requests.
 	 * Merged with provider defaults; caller values override default headers.
