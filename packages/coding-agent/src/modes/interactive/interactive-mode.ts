@@ -440,6 +440,7 @@ export class InteractiveMode {
 	// Thinking block visibility state
 	private hideThinkingBlock = false;
 	private outputPad = 1;
+	private outputPadY: 0 | 1 = 1;
 	private readonly mermaidMarkdownTransformer: MarkdownTransformer = createMermaidMarkdownTransformer({
 		getMode: () => this.settingsManager.getMermaidRenderingMode(),
 		theme,
@@ -574,9 +575,10 @@ export class InteractiveMode {
 		this.footerContainer = new Container();
 		this.footerContainer.addChild(this.footer);
 
-		// Load hide thinking block setting
+		// Load output display settings
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
 		this.outputPad = this.settingsManager.getOutputPad();
+		this.outputPadY = this.settingsManager.getOutputPadY();
 
 		// Register themes from resource loader and initialize
 		setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
@@ -1953,6 +1955,7 @@ export class InteractiveMode {
 		this.footerDataProvider.setCwd(this.sessionManager.getCwd());
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
 		this.outputPad = this.settingsManager.getOutputPad();
+		this.outputPadY = this.settingsManager.getOutputPadY();
 		this.ui.setShowHardwareCursor(this.settingsManager.getShowHardwareCursor());
 		const clearOnShrink = this.settingsManager.getClearOnShrink();
 		this.ui.setClearOnShrink(clearOnShrink);
@@ -3238,6 +3241,7 @@ export class InteractiveMode {
 						this.hiddenThinkingLabel,
 						this.outputPad,
 						this.getMarkdownTransformers(),
+						this.outputPadY,
 					);
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
@@ -3261,6 +3265,7 @@ export class InteractiveMode {
 									{
 										showImages: this.settingsManager.getShowImages(),
 										imageWidthCells: this.settingsManager.getImageWidthCells(),
+										outputPadY: this.outputPadY,
 									},
 									this.getRegisteredToolDefinition(content.name),
 									this.ui,
@@ -3336,6 +3341,7 @@ export class InteractiveMode {
 						{
 							showImages: this.settingsManager.getShowImages(),
 							imageWidthCells: this.settingsManager.getImageWidthCells(),
+							outputPadY: this.outputPadY,
 						},
 						this.getRegisteredToolDefinition(event.toolName),
 						this.ui,
@@ -3605,6 +3611,7 @@ export class InteractiveMode {
 						renderer,
 						this.getMarkdownThemeWithSettings(),
 						this.outputPad,
+						this.outputPadY,
 					);
 					component.setExpanded(this.toolOutputExpanded);
 					this.chatContainer.addChild(component);
@@ -3630,8 +3637,8 @@ export class InteractiveMode {
 			case "user": {
 				const textContent = this.getUserMessageText(message);
 				if (textContent) {
-					if (this.chatContainer.children.length > 0) {
-						this.chatContainer.addChild(new Spacer(1));
+					if (this.chatContainer.children.length > 0 && this.outputPadY > 0) {
+						this.chatContainer.addChild(new Spacer(this.outputPadY));
 					}
 					const skillBlock = parseSkillBlock(textContent);
 					if (skillBlock) {
@@ -3644,12 +3651,15 @@ export class InteractiveMode {
 						this.chatContainer.addChild(component);
 						// Render user message separately if present
 						if (skillBlock.userMessage) {
-							this.chatContainer.addChild(new Spacer(1));
+							if (this.outputPadY > 0) {
+								this.chatContainer.addChild(new Spacer(this.outputPadY));
+							}
 							const userComponent = new UserMessageComponent(
 								skillBlock.userMessage,
 								this.getMarkdownThemeWithSettings(),
 								this.outputPad,
 								this.getMarkdownTransformers(),
+								this.outputPadY,
 							);
 							this.chatContainer.addChild(userComponent);
 						}
@@ -3659,6 +3669,7 @@ export class InteractiveMode {
 							this.getMarkdownThemeWithSettings(),
 							this.outputPad,
 							this.getMarkdownTransformers(),
+							this.outputPadY,
 						);
 						this.chatContainer.addChild(userComponent);
 					}
@@ -3676,6 +3687,7 @@ export class InteractiveMode {
 					this.hiddenThinkingLabel,
 					this.outputPad,
 					this.getMarkdownTransformers(),
+					this.outputPadY,
 				);
 				this.chatContainer.addChild(assistantComponent);
 				break;
@@ -3731,6 +3743,7 @@ export class InteractiveMode {
 							{
 								showImages: this.settingsManager.getShowImages(),
 								imageWidthCells: this.settingsManager.getImageWidthCells(),
+								outputPadY: this.outputPadY,
 							},
 							this.getRegisteredToolDefinition(content.name),
 							this.ui,
@@ -4594,6 +4607,7 @@ export class InteractiveMode {
 					defaultProjectTrust: this.settingsManager.getDefaultProjectTrust(),
 					editorPaddingX: this.settingsManager.getEditorPaddingX(),
 					outputPad: this.settingsManager.getOutputPad(),
+					outputPadY: this.settingsManager.getOutputPadY(),
 					autocompleteMaxVisible: this.settingsManager.getAutocompleteMaxVisible(),
 					quietStartup: this.settingsManager.getQuietStartup(),
 					clearOnShrink: this.settingsManager.getClearOnShrink(),
@@ -4738,6 +4752,11 @@ export class InteractiveMode {
 							this.ui.requestRender();
 							return;
 						}
+						this.rebuildChatFromMessages();
+					},
+					onOutputPadYChange: (padding) => {
+						this.settingsManager.setOutputPadY(padding);
+						this.outputPadY = padding;
 						this.rebuildChatFromMessages();
 					},
 					onAutocompleteMaxVisibleChange: (maxVisible) => {
@@ -6020,6 +6039,7 @@ export class InteractiveMode {
 			}
 			this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
 			this.outputPad = this.settingsManager.getOutputPad();
+			this.outputPadY = this.settingsManager.getOutputPadY();
 			this.rebuildChatFromMessages();
 			chatRestoredBeforeSessionStart = true;
 		};

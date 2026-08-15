@@ -95,6 +95,10 @@
 - Fixed proxied plain-HTTP provider requests hanging after a tool call by tunneling them with CONNECT ([#8134](https://github.com/earendil-works/pi/issues/8134)).
 - Fixed RPC `abort` reporting success without cancelling an in-progress manual compaction ([#8920](https://github.com/earendil-works/pi/issues/8920)).
 
+### Added
+
+- Added `outputPadY` to configure vertical padding for user, assistant, custom, and tool messages, including extension message renderers.
+
 ## [0.84.4] - 2026-08-28
 
 ### New Features
