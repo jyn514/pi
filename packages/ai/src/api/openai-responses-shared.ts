@@ -19,6 +19,7 @@ import type {
 	AssistantMessage,
 	ImageContent,
 	Model,
+	ProviderRequestOptions,
 	StopReason,
 	SystemMessage,
 	TextContent,
@@ -32,6 +33,7 @@ import type {
 import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
+import { emitProviderEvent } from "../utils/provider-event.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
 import { resolveTranscript, resolveTranscriptTools } from "../utils/transcript.ts";
@@ -108,6 +110,7 @@ function convertToolResultOutput<TApi extends Api>(
 
 export interface OpenAIResponsesStreamOptions {
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
+	onProviderEvent?: ProviderRequestOptions["onProviderEvent"];
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
 	resolveServiceTier?: (
 		responseServiceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
@@ -596,6 +599,7 @@ export async function processResponsesStream<TApi extends Api>(
 	};
 
 	for await (const event of openaiStream) {
+		emitProviderEvent(options, model, event);
 		if (event.type === "response.created") {
 			output.responseId = event.response.id;
 		} else if (event.type === "response.output_item.added") {

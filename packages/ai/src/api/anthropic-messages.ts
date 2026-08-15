@@ -36,6 +36,7 @@ import { headersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
+import { emitProviderEvent } from "../utils/provider-event.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
@@ -599,6 +600,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			const blocks = output.content as Block[];
 
 			for await (const event of iterateAnthropicEvents(response, options?.signal)) {
+				emitProviderEvent(options, model, event);
 				if (event.type === "message_start") {
 					output.responseId = event.message.id;
 					const transformations = event.message.input_transformations;

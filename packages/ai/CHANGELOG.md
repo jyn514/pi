@@ -65,6 +65,9 @@
 - Fixed OpenAI Codex SSE parsing to process terminal events that are not followed by a blank line ([#9047](https://github.com/earendil-works/pi/issues/9047)).
 - Fixed `NO_PROXY` matching for both root domains and subdomains ([#8737](https://github.com/earendil-works/pi/pull/8737) by [@MeiSiristhebest](https://github.com/MeiSiristhebest)).
 
+### Added
+
+- Added an opt-in transient provider-event callback for observing native response events before Pi normalizes them.
 ## [0.84.4] - 2026-08-28
 
 ### Added
