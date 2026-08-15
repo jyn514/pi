@@ -8,6 +8,7 @@ import type { ToolDefinition } from "../src/core/extensions/types.ts";
 import { type BashOperations, createBashToolDefinition } from "../src/core/tools/bash.ts";
 import { createReadTool, createReadToolDefinition } from "../src/core/tools/read.ts";
 import { withBuiltInRenderers } from "../src/core/tools/renderers/index.ts";
+import { truncateTail } from "../src/core/tools/truncate.ts";
 import { createWriteToolDefinition } from "../src/core/tools/write.ts";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
@@ -96,6 +97,152 @@ describe("ToolExecutionComponent parity", () => {
 		expect(rendered).toContain("custom call");
 		expect(rendered).toContain("custom result");
 	});
+
+	test("uses configured vertical output padding", () => {
+		const toolDefinition: ToolDefinition = {
+			...createBaseToolDefinition(),
+			renderCall: () => new Text("custom call", 0, 0),
+		};
+		const padded = new ToolExecutionComponent(
+			"custom_tool",
+			"tool-padded",
+			{},
+			{},
+			toolDefinition,
+			createFakeTui(),
+			process.cwd(),
+		);
+		const compact = new ToolExecutionComponent(
+			"custom_tool",
+			"tool-compact",
+			{},
+			{ outputPadY: 0 },
+			toolDefinition,
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		expect(padded.render(120)).toHaveLength(4);
+		expect(compact.render(120)).toHaveLength(1);
+	});
+
+	test("removes internal bash result spacing in compact mode", () => {
+		const tool = createBashToolDefinition(process.cwd(), { exposeSessionEnvironment: false });
+		const component = new ToolExecutionComponent(
+			"bash",
+			"tool-compact-bash",
+			{ command: "date" },
+			{ outputPadY: 0 },
+			tool,
+			createFakeTui(),
+			process.cwd(),
+		);
+		component.markExecutionStarted();
+		component.updateResult({ content: [{ type: "text", text: "08:25:45 CEST" }], isError: false }, false);
+		const lines = component.render(120).map((line) => stripAnsi(line));
+
+		expect(lines).toHaveLength(3);
+		expect(lines[0]).toContain("$ date");
+		expect(lines[1]).toContain("08:25:45 CEST");
+		expect(lines[2]).toContain("Took");
+	});
+
+	// The outputPadY fork duplicated shell presentation and left renderer-only consumers padded.
+	test.each([
+		{ outputPadY: 0, expanded: false },
+		{ outputPadY: 0, expanded: true },
+		{ outputPadY: 1, expanded: false },
+		{ outputPadY: 1, expanded: true },
+	] as const)(
+		"matches ordinary, renderer-only and inherited bash output with padding $outputPadY, expanded $expanded",
+		({ outputPadY, expanded }) => {
+			vi.useFakeTimers();
+			vi.setSystemTime(0);
+			const definitions = [
+				createBashToolDefinition(process.cwd(), { exposeSessionEnvironment: false }),
+				withBuiltInRenderers("bash", undefined),
+				withBuiltInRenderers("bash", createBaseToolDefinition("bash")),
+			];
+			const components = definitions.map((definition, index) => {
+				const component = new ToolExecutionComponent(
+					"bash",
+					`tool-bash-parity-${index}`,
+					{ command: "generate output", timeout: 120 },
+					{ outputPadY },
+					definition,
+					createFakeTui(),
+					process.cwd(),
+				);
+				component.setExpanded(expanded);
+				component.markExecutionStarted();
+				return component;
+			});
+			const assertParity = (width: number, duration: string) => {
+				const expected = components[0].render(width);
+				for (const component of components) {
+					expect(component.render(width)).toEqual(expected);
+					// Repeat frames and width changes must retain the full cached preview, including its hint.
+					expect(component.render(width)).toEqual(expected);
+				}
+				const lines = expected.map((line) => stripAnsi(line).trim());
+				expect(lines.join("\n")).toContain("$ generate output (timeout 120s)");
+				expect(lines.join("\n")).toContain(duration);
+				if (outputPadY === 0) expect(lines).not.toContain("");
+				else expect(lines).toContain("");
+				return lines.join("\n");
+			};
+
+			for (const component of components) component.updateResult({ content: [], isError: false }, true);
+			assertParity(120, "Elapsed 0.0s");
+
+			const output = Array.from({ length: 12 }, (_, index) => `line-${index + 1} ${"x".repeat(45)}`).join("\n");
+			const truncation = truncateTail(output, { maxLines: 8 });
+			const details = { truncation, fullOutputPath: "/tmp/pi-bash-parity.log" };
+			vi.setSystemTime(90_900);
+			for (const component of components) {
+				component.updateResult(
+					{ content: [{ type: "text", text: truncation.content }], details, isError: false },
+					true,
+				);
+			}
+			for (const width of [120, 40, 120]) {
+				const rendered = assertParity(width, "Elapsed 1m 30s");
+				expect(rendered).toContain("line-12");
+				if (width === 120) {
+					expect(rendered.match(/Full output:/g)).toHaveLength(1);
+					expect(rendered).toContain("Truncated: showing 8 of 12 lines");
+					if (expanded) expect(rendered).toContain("line-5");
+					else {
+						expect(rendered).not.toContain("line-5");
+						expect(rendered).toContain("3 earlier lines");
+					}
+				}
+			}
+
+			// Completed output changes the preview and carries a model-facing footer removed by the renderer.
+			const finalOutput = `${truncation.content}\nfinal marker`;
+			for (const component of components) {
+				component.updateResult({
+					content: [
+						{
+							type: "text",
+							text: `${finalOutput}\n\n[Showing lines 5-12 of 12. Full output: ${details.fullOutputPath}]`,
+						},
+					],
+					details,
+					isError: false,
+				});
+			}
+			const completed = assertParity(120, "Took 1m 30s");
+			expect(completed).toContain("final marker");
+			expect(completed.match(/Full output:/g)).toHaveLength(1);
+			expect(completed).not.toContain("[Showing lines");
+			expect(vi.getTimerCount()).toBe(0);
+			vi.advanceTimersByTime(1_000);
+			for (const component of components) component.invalidate();
+			expect(assertParity(120, "Took 1m 30s")).toBe(completed);
+		},
+	);
 
 	test("self-rendered empty tool rows take no layout space", () => {
 		const toolDefinition: ToolDefinition = {

@@ -3266,6 +3266,21 @@ const highlighted = highlightCode(code, lang);
 
 Use `ctx.mode === "tui"` before TUI-specific features (`custom()`, component factories, terminal input). Use `ctx.hasUI` before dialog and notification methods that work in both TUI and RPC modes.
 
+Custom message renderers registered with `pi.registerMessageRenderer()` receive `{ expanded, outputPad, outputPadY }`; custom entry renderers registered with `pi.registerEntryRenderer()` receive `{ expanded, outputPadY }`. Use the configured padding instead of hardcoding vertical spacing:
+
+```typescript
+import { Text } from "@earendil-works/pi-tui";
+
+pi.registerMessageRenderer("status", (message, { outputPad, outputPadY }, theme) => {
+  return new Text(theme.fg("accent", String(message.content)), outputPad, outputPadY);
+});
+pi.registerEntryRenderer("status-card", (entry, { outputPadY }, theme) => {
+  return new Text(theme.fg("accent", JSON.stringify(entry.data) ?? ""), 1, outputPadY);
+});
+```
+
+Tool `renderCall` and `renderResult` callbacks also receive `context.outputPadY: 0 | 1`. The default tool shell handles padding; a tool using `renderShell: "self"` owns its framing and should honor this value. See [`outputPadY`](settings.md#terminal-and-display) and [`message-renderer.ts`](../examples/extensions/message-renderer.ts).
+
 <a id="use-examples-as-the-implementation-reference"></a>
 
 ## Examples Reference

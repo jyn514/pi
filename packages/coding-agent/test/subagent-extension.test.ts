@@ -206,6 +206,7 @@ function renderText(tool: ToolDefinition, result: AgentToolResult<unknown>, expa
 		isError: false,
 		durationMs: undefined,
 		outputPad: 0,
+		outputPadY: 0,
 		keyText: () => "",
 		keyHint: (_keybinding, description) => description,
 	});

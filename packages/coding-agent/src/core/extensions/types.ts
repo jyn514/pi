@@ -507,6 +507,8 @@ export interface ToolRenderContext<TState = any, TArgs = any> extends Keybinding
 	expanded: boolean;
 	/** Whether inline images are currently shown in the TUI. */
 	showImages: boolean;
+	/** Vertical padding configured by the outputPadY setting. */
+	outputPadY: 0 | 1;
 	/** Whether the current result is an error. */
 	isError: boolean;
 	/**
@@ -1556,6 +1558,8 @@ export interface MessageRenderOptions extends KeybindingHints {
 	expanded: boolean;
 	/** Horizontal padding configured by the outputPad setting. */
 	outputPad: number;
+	/** Vertical padding configured by the outputPadY setting. */
+	outputPadY: number;
 }
 
 /**
@@ -1593,6 +1597,8 @@ export interface MarkdownTransformerRegistration {
 
 export interface EntryRenderOptions extends KeybindingHints {
 	expanded: boolean;
+	/** Vertical padding configured by the outputPadY setting. */
+	outputPadY: number;
 }
 
 export type MessageRenderer<T = unknown> = (

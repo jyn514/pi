@@ -16,6 +16,7 @@ export class CompactionSummaryMessageComponent extends Box {
 	private markdownTransformers: readonly MarkdownTransformer[];
 	private messageId?: string;
 	private timestamp?: string;
+	private outputPadY: 0 | 1;
 
 	constructor(
 		message: CompactionSummaryMessage,
@@ -24,13 +25,15 @@ export class CompactionSummaryMessageComponent extends Box {
 		markdownTransformers: readonly MarkdownTransformer[] = [],
 		messageId?: string,
 		timestamp?: string,
+		outputPadY: 0 | 1 = 1,
 	) {
-		super(outputPad, 1, (t) => theme.bg("customMessageBg", t));
+		super(outputPad, outputPadY, (text) => theme.bg("customMessageBg", text));
 		this.message = message;
 		this.markdownTheme = markdownTheme;
 		this.markdownTransformers = markdownTransformers;
 		this.messageId = messageId;
 		this.timestamp = timestamp;
+		this.outputPadY = outputPadY;
 		this.updateDisplay();
 	}
 
@@ -55,10 +58,12 @@ export class CompactionSummaryMessageComponent extends Box {
 		const tokenStr = this.message.tokensBefore.toLocaleString();
 		const label = theme.fg("customMessageLabel", `\x1b[1m[compaction]\x1b[22m`);
 		content.addChild(new Text(label, 0, 0));
-		content.addChild(new Spacer(1));
+		if (this.outputPadY > 0) {
+			content.addChild(new Spacer(this.outputPadY));
+		}
 
 		if (this.expanded) {
-			const header = `**Compacted from ${tokenStr} tokens**\n\n`;
+			const header = `**Compacted from ${tokenStr} tokens**${this.outputPadY > 0 ? "\n\n" : "  \n"}`;
 			const transform = createMarkdownTransform(
 				"summary",
 				() => false,

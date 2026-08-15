@@ -14,6 +14,7 @@ export class UserMessageComponent extends Container {
 	private text: string;
 	private markdownTheme: MarkdownTheme;
 	private outputPad: number;
+	private outputPadY: 0 | 1;
 	private markdownTransformers: readonly MarkdownTransformer[];
 	private messageId?: string;
 	private timestamp?: string;
@@ -23,6 +24,7 @@ export class UserMessageComponent extends Container {
 		markdownTheme: MarkdownTheme = getMarkdownTheme(),
 		outputPad = 1,
 		markdownTransformers: readonly MarkdownTransformer[] = [],
+		outputPadY: 0 | 1 = 1,
 		messageId?: string,
 		timestamp?: string,
 	) {
@@ -30,6 +32,7 @@ export class UserMessageComponent extends Container {
 		this.text = text;
 		this.markdownTheme = markdownTheme;
 		this.outputPad = outputPad;
+		this.outputPadY = outputPadY;
 		this.markdownTransformers = markdownTransformers;
 		this.messageId = messageId;
 		this.timestamp = timestamp;
@@ -41,6 +44,11 @@ export class UserMessageComponent extends Container {
 		this.rebuild();
 	}
 
+	setOutputPadY(padding: 0 | 1): void {
+		this.outputPadY = padding;
+		this.rebuild();
+	}
+
 	private rebuild(): void {
 		this.clear();
 		// The Markdown pads and colors its own background: a Box around it would keep a second full-width copy of every
@@ -49,7 +57,7 @@ export class UserMessageComponent extends Container {
 			new Markdown(
 				this.text,
 				this.outputPad,
-				1,
+				this.outputPadY,
 				this.markdownTheme,
 				{
 					color: (content: string) => theme.fg("userMessageText", content),

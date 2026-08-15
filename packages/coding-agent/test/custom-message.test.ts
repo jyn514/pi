@@ -21,9 +21,9 @@ describe("CustomMessageComponent", () => {
 			display: true,
 			timestamp: Date.now(),
 		};
-		const component = new CustomMessageComponent(message, renderer, undefined, 1);
+		const component = new CustomMessageComponent(message, renderer, undefined, 1, 1);
 
-		expect(optionsSeen).toMatchObject([{ expanded: false, outputPad: 1 }]);
+		expect(optionsSeen).toMatchObject([{ expanded: false, outputPad: 1, outputPadY: 1 }]);
 		expect(
 			component
 				.render(40)
@@ -33,13 +33,17 @@ describe("CustomMessageComponent", () => {
 
 		component.setOutputPad(0);
 
-		expect(optionsSeen.at(-1)).toMatchObject({ expanded: false, outputPad: 0 });
+		expect(optionsSeen.at(-1)).toMatchObject({ expanded: false, outputPad: 0, outputPadY: 1 });
 		expect(
 			component
 				.render(40)
 				.map(stripAnsi)
 				.some((line) => line.startsWith("custom")),
 		).toBe(true);
+
+		component.setOutputPadY(0);
+		expect(optionsSeen.at(-1)).toMatchObject({ expanded: false, outputPad: 0, outputPadY: 0 });
+		expect(component.render(40)).toHaveLength(1);
 	});
 
 	test("runs Markdown transformers on default-rendered content", () => {

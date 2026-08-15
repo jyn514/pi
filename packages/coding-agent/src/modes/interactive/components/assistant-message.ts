@@ -34,6 +34,7 @@ export class AssistantMessageComponent extends Container {
 	private markdownTheme: MarkdownTheme;
 	private hiddenThinkingLabel: string;
 	private outputPad: number;
+	private outputPadY: number;
 	private markdownTransformers: readonly MarkdownTransformer[];
 	private lastMessage?: AssistantMessage;
 	private hasToolCalls = false;
@@ -50,6 +51,7 @@ export class AssistantMessageComponent extends Container {
 		hiddenThinkingLabel = "Thinking...",
 		outputPad = 1,
 		markdownTransformers: readonly MarkdownTransformer[] = [],
+		outputPadY = 1,
 		messageId?: string,
 		timestamp?: string,
 	) {
@@ -59,6 +61,7 @@ export class AssistantMessageComponent extends Container {
 		this.markdownTheme = markdownTheme;
 		this.hiddenThinkingLabel = hiddenThinkingLabel;
 		this.outputPad = outputPad;
+		this.outputPadY = outputPadY;
 		this.markdownTransformers = markdownTransformers;
 		this.messageId = messageId;
 		this.timestamp = timestamp;
@@ -103,6 +106,13 @@ export class AssistantMessageComponent extends Container {
 		}
 	}
 
+	setOutputPadY(padding: number): void {
+		this.outputPadY = padding;
+		if (this.lastMessage) {
+			this.updateContent(this.lastMessage);
+		}
+	}
+
 	override render(width: number): string[] {
 		const lines = super.render(width);
 		if (this.hasToolCalls || lines.length === 0) {
@@ -135,8 +145,8 @@ export class AssistantMessageComponent extends Container {
 		// by more visible content, while hidden thinking runs without a label contribute nothing.
 		let needsSpacer = true;
 		const addVisibleChild = (child: Component) => {
-			if (needsSpacer) {
-				this.contentContainer.addChild(new Spacer(1));
+			if (needsSpacer && this.outputPadY > 0) {
+				this.contentContainer.addChild(new Spacer(this.outputPadY));
 				needsSpacer = false;
 			}
 			this.contentContainer.addChild(child);
@@ -175,7 +185,9 @@ export class AssistantMessageComponent extends Container {
 					}
 					const thinking = thinkingContent.thinking.trim();
 					if (thinking) {
-						thinkingBlocks.push(thinking);
+						// Providers may use blank lines between streamed reasoning parts. Compact only
+						// at outputPadY=0 so padded output and the underlying message stay unchanged.
+						thinkingBlocks.push(this.outputPadY === 0 ? thinking.replace(/\n{2,}/g, "\n") : thinking);
 					}
 				}
 				i--;
@@ -190,7 +202,7 @@ export class AssistantMessageComponent extends Container {
 				if (hidden && !this.hiddenThinkingLabel.trim()) {
 					continue;
 				}
-				const thinking = thinkingBlocks.join("\n\n");
+				const thinking = thinkingBlocks.join(this.outputPadY === 0 ? "  \n" : "\n\n");
 				const thinkingComponent = hidden
 					? new Text(theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel)), this.outputPad, 0)
 					: markdownBlock(
@@ -237,7 +249,9 @@ export class AssistantMessageComponent extends Container {
 		const hasToolCalls = message.content.some((c) => c.type === "toolCall");
 		this.hasToolCalls = hasToolCalls;
 		if (message.stopReason === "length") {
-			this.contentContainer.addChild(new Spacer(1));
+			if (this.outputPadY > 0) {
+				this.contentContainer.addChild(new Spacer(this.outputPadY));
+			}
 			this.contentContainer.addChild(
 				new Text(theme.fg("error", "Response was truncated before completion."), this.outputPad, 0),
 			);
@@ -247,11 +261,15 @@ export class AssistantMessageComponent extends Container {
 					message.errorMessage && message.errorMessage !== "Request was aborted"
 						? message.errorMessage
 						: "Operation aborted";
-				this.contentContainer.addChild(new Spacer(1));
+				if (this.outputPadY > 0) {
+					this.contentContainer.addChild(new Spacer(this.outputPadY));
+				}
 				this.contentContainer.addChild(new Text(theme.fg("error", abortMessage), this.outputPad, 0));
 			} else if (message.stopReason === "error") {
 				const errorMsg = message.errorMessage || "Unknown error";
-				this.contentContainer.addChild(new Spacer(1));
+				if (this.outputPadY > 0) {
+					this.contentContainer.addChild(new Spacer(this.outputPadY));
+				}
 				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), this.outputPad, 0));
 			}
 		}

@@ -31,16 +31,20 @@ export class BashExecutionComponent extends Container {
 	/** `dim` marks `!!` commands, whose output is excluded from the model context. */
 	private readonly colorKey: "dim" | "bashMode";
 	private outputPad: number;
+	private outputPadY: 0 | 1;
 
-	constructor(command: string, ui: TUI, excludeFromContext = false, outputPad = 1) {
+	constructor(command: string, ui: TUI, excludeFromContext = false, outputPad = 1, outputPadY: 0 | 1 = 1) {
 		super();
 		this.command = command;
 		this.colorKey = excludeFromContext ? "dim" : "bashMode";
 		this.outputPad = outputPad;
+		this.outputPadY = outputPadY;
 		const borderColor = (str: string) => theme.fg(this.colorKey, str);
 
 		// Add spacer
-		this.addChild(new Spacer(1));
+		if (this.outputPadY > 0) {
+			this.addChild(new Spacer(this.outputPadY));
+		}
 
 		// Top border
 		this.addChild(new DynamicBorder(borderColor));
@@ -146,11 +150,13 @@ export class BashExecutionComponent extends Container {
 			if (this.expanded) {
 				// Show all lines
 				const displayText = availableLines.map((line) => theme.fg("muted", line)).join("\n");
-				this.contentContainer.addChild(new Text(`\n${displayText}`, this.outputPad, 0));
+				this.contentContainer.addChild(
+					new Text(`${this.outputPadY > 0 ? "\n" : ""}${displayText}`, this.outputPad, 0),
+				);
 			} else {
 				// Use shared visual truncation utility with width-aware caching
 				const styledOutput = previewLogicalLines.map((line) => theme.fg("muted", line)).join("\n");
-				const styledInput = `\n${styledOutput}`;
+				const styledInput = `${this.outputPadY > 0 ? "\n" : ""}${styledOutput}`;
 				let cachedWidth: number | undefined;
 				let cachedLines: string[] | undefined;
 				this.contentContainer.addChild({
@@ -202,7 +208,9 @@ export class BashExecutionComponent extends Container {
 			}
 
 			if (statusParts.length > 0) {
-				this.contentContainer.addChild(new Text(`\n${statusParts.join("\n")}`, this.outputPad, 0));
+				this.contentContainer.addChild(
+					new Text(`${this.outputPadY > 0 ? "\n" : ""}${statusParts.join("\n")}`, this.outputPad, 0),
+				);
 			}
 		}
 	}

@@ -24,6 +24,16 @@ describe("UserMessageComponent", () => {
 		expect(lines[2].endsWith(BG_RESET)).toBe(true);
 	});
 
+	test("uses configured vertical output padding", () => {
+		initTheme("dark");
+
+		const padded = new UserMessageComponent("hello");
+		const compact = new UserMessageComponent("hello", undefined, 1, [], 0);
+
+		expect(padded.render(20)).toHaveLength(3);
+		expect(compact.render(20)).toHaveLength(1);
+	});
+
 	test("chains Markdown transformers with user message context", () => {
 		initTheme("dark");
 		const calls: string[] = [];
@@ -64,7 +74,9 @@ describe("UserMessageComponent", () => {
 			return _markdown;
 		};
 
-		new UserMessageComponent("restored", undefined, 1, [capture], "entry-abc", "2025-01-15T10:30:00.000Z").render(80);
+		new UserMessageComponent("restored", undefined, 1, [capture], 1, "entry-abc", "2025-01-15T10:30:00.000Z").render(
+			80,
+		);
 		new UserMessageComponent("live", undefined, 1, [capture]).render(80);
 
 		expect(captured).toEqual([

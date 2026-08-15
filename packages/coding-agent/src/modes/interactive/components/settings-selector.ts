@@ -90,6 +90,7 @@ export interface SettingsConfig {
 	showHardwareCursor: boolean;
 	editorPaddingX: number;
 	outputPad: 0 | 1;
+	outputPadY: 0 | 1;
 	autocompleteMaxVisible: number;
 	quietStartup: QuietStartup;
 	defaultProjectTrust: DefaultProjectTrust;
@@ -130,6 +131,7 @@ export interface SettingsCallbacks {
 	onShowHardwareCursorChange: (enabled: boolean) => void;
 	onEditorPaddingXChange: (padding: number) => void;
 	onOutputPadChange: (padding: 0 | 1) => void;
+	onOutputPadYChange: (padding: 0 | 1) => void;
 	onAutocompleteMaxVisibleChange: (maxVisible: number) => void;
 	onQuietStartupChange: (quiet: QuietStartup) => void;
 	onDefaultProjectTrustChange: (defaultProjectTrust: DefaultProjectTrust) => void;
@@ -845,9 +847,18 @@ export class SettingsSelectorComponent extends Container {
 			values: ["0", "1"],
 		});
 
-		// Autocomplete max visible toggle (insert after output-padding)
 		const outputPaddingIndex = items.findIndex((item) => item.id === "output-padding");
 		items.splice(outputPaddingIndex + 1, 0, {
+			id: "output-padding-y",
+			label: "Output vertical padding",
+			description: "Vertical padding for chat output and transient status rows",
+			currentValue: String(config.outputPadY),
+			values: ["0", "1"],
+		});
+
+		// Autocomplete max visible toggle (insert after vertical output padding)
+		const outputPaddingYIndex = items.findIndex((item) => item.id === "output-padding-y");
+		items.splice(outputPaddingYIndex + 1, 0, {
 			id: "autocomplete-max-visible",
 			label: "Autocomplete max items",
 			description: "Max visible items in autocomplete dropdown (3-20)",
@@ -965,6 +976,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "output-padding":
 						callbacks.onOutputPadChange(newValue === "0" ? 0 : 1);
+						break;
+					case "output-padding-y":
+						callbacks.onOutputPadYChange(newValue === "0" ? 0 : 1);
 						break;
 					case "autocomplete-max-visible":
 						callbacks.onAutocompleteMaxVisibleChange(parseInt(newValue, 10));

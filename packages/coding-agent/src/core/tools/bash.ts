@@ -1,6 +1,5 @@
 import { constants } from "node:fs";
 import { access as fsAccess } from "node:fs/promises";
-import { constants as osConstants } from "node:os";
 import { spawn } from "child_process";
 import { type Static, Type } from "typebox";
 import { waitForChildProcess } from "../../utils/child-process.ts";
@@ -14,7 +13,7 @@ import {
 } from "../../utils/shell.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
-import { BASH_UPDATE_THROTTLE_MS, createShellRenderers } from "./renderers/bash.ts";
+import { BASH_UPDATE_THROTTLE_MS, type BashRenderState, createShellRenderers } from "./renderers/bash.ts";
 import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult } from "./truncate.ts";
 
@@ -77,8 +76,7 @@ export interface BashOperations {
 	 * @param command The command to execute
 	 * @param cwd Working directory
 	 * @param options Execution options
-	 * @returns Promise resolving to the exit code. Report signal terminations as 128 + signal number;
-	 * a null exit code is treated as a failed command.
+	 * @returns Promise resolving to exit code (null if killed)
 	 */
 	exec: (
 		command: string,
@@ -151,10 +149,7 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 				if (timedOut) {
 					throw new Error(`timeout:${timeout}`);
 				}
-				// A signal-killed shell has no exit code. Use the standard shell convention so
-				// callers do not mistake the termination for a successful command.
-				const signalCode = child.signalCode;
-				return { exitCode: exitCode ?? (signalCode ? 128 + (osConstants.signals[signalCode] ?? 0) : 1) };
+				return { exitCode };
 			} finally {
 				if (child.pid) untrackDetachedChildPid(child.pid);
 				if (timeoutHandle) clearTimeout(timeoutHandle);
@@ -223,11 +218,7 @@ export interface BashToolOptions {
 	spawnHook?: BashSpawnHook;
 }
 
-export type BashRenderState = {
-	startedAt: number | undefined;
-	endedAt: number | undefined;
-	interval: NodeJS.Timeout | undefined;
-};
+export type { BashRenderState } from "./renderers/bash.ts";
 
 export interface ShellToolConfig {
 	name: string;
@@ -262,16 +253,10 @@ export function createShellToolDefinition(
 			{ command, timeout }: { command: string; timeout?: number },
 			signal?: AbortSignal,
 			onUpdate?,
-			ctx?: ExtensionContext,
+			ctx?,
 		) {
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
-			const spawnContext = resolveSpawnContext(
-				resolvedCommand,
-				ctx?.cwd || cwd,
-				spawnHook,
-				exposeSessionEnvironment,
-				ctx,
-			);
+			const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook, exposeSessionEnvironment, ctx);
 			const output = new OutputAccumulator({ tempFilePrefix: config.tempFilePrefix });
 			let acceptingOutput = true;
 			let updateTimer: NodeJS.Timeout | undefined;

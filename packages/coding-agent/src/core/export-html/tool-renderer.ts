@@ -92,6 +92,7 @@ export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRend
 			isPartial,
 			expanded,
 			showImages: false,
+			outputPadY: 1,
 			isError,
 			durationMs: undefined,
 			outputPad: 1,
