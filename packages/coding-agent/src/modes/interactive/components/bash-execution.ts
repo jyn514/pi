@@ -28,17 +28,21 @@ export class BashExecutionComponent extends Container {
 	private fullOutputPath?: string;
 	private expanded = false;
 	private contentContainer: Container;
+	private outputPadY: number;
 
-	constructor(command: string, ui: TUI, excludeFromContext = false) {
+	constructor(command: string, ui: TUI, excludeFromContext = false, outputPadY = 1) {
 		super();
 		this.command = command;
+		this.outputPadY = outputPadY;
 
 		// Use dim border for excluded-from-context commands (!! prefix)
 		const colorKey = excludeFromContext ? "dim" : "bashMode";
 		const borderColor = (str: string) => theme.fg(colorKey, str);
 
 		// Add spacer
-		this.addChild(new Spacer(1));
+		if (this.outputPadY > 0) {
+			this.addChild(new Spacer(this.outputPadY));
+		}
 
 		// Top border
 		this.addChild(new DynamicBorder(borderColor));
@@ -143,11 +147,11 @@ export class BashExecutionComponent extends Container {
 			if (this.expanded) {
 				// Show all lines
 				const displayText = availableLines.map((line) => theme.fg("muted", line)).join("\n");
-				this.contentContainer.addChild(new Text(`\n${displayText}`, 1, 0));
+				this.contentContainer.addChild(new Text(`${this.outputPadY > 0 ? "\n" : ""}${displayText}`, 1, 0));
 			} else {
 				// Use shared visual truncation utility with width-aware caching
 				const styledOutput = previewLogicalLines.map((line) => theme.fg("muted", line)).join("\n");
-				const styledInput = `\n${styledOutput}`;
+				const styledInput = `${this.outputPadY > 0 ? "\n" : ""}${styledOutput}`;
 				let cachedWidth: number | undefined;
 				let cachedLines: string[] | undefined;
 				this.contentContainer.addChild({
@@ -199,7 +203,9 @@ export class BashExecutionComponent extends Container {
 			}
 
 			if (statusParts.length > 0) {
-				this.contentContainer.addChild(new Text(`\n${statusParts.join("\n")}`, 1, 0));
+				this.contentContainer.addChild(
+					new Text(`${this.outputPadY > 0 ? "\n" : ""}${statusParts.join("\n")}`, 1, 0),
+				);
 			}
 		}
 	}

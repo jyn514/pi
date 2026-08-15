@@ -151,6 +151,7 @@ export class ToolExecutionComponent extends Container {
 			isPartial: this.isPartial,
 			expanded: this.expanded,
 			showImages: this.showImages,
+			outputPadY: this.outputPadY,
 			isError: this.result?.isError ?? false,
 		};
 	}
@@ -390,7 +391,7 @@ export class ToolExecutionComponent extends Container {
 					const imageMimeType = converted?.mimeType ?? img.mimeType;
 					if (caps.images === "kitty" && imageMimeType !== "image/png") continue;
 
-					const spacer = new Spacer(1);
+					const spacer = new Spacer(this.outputPadY);
 					this.addChild(spacer);
 					this.imageSpacers.push(spacer);
 					const imageComponent = new Image(

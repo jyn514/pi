@@ -13,11 +13,13 @@ export class CustomEntryComponent extends Container {
 	private renderer: EntryRenderer;
 	private customComponent?: Component;
 	private _expanded = false;
+	private outputPadY: number;
 
-	constructor(entry: CustomEntry<unknown>, renderer: EntryRenderer) {
+	constructor(entry: CustomEntry<unknown>, renderer: EntryRenderer, outputPadY = 1) {
 		super();
 		this.entry = entry;
 		this.renderer = renderer;
+		this.outputPadY = outputPadY;
 		this.rebuild();
 	}
 
@@ -43,10 +45,10 @@ export class CustomEntryComponent extends Container {
 
 		let component: Component | undefined;
 		try {
-			component = this.renderer(this.entry, { expanded: this._expanded }, theme);
+			component = this.renderer(this.entry, { expanded: this._expanded, outputPadY: this.outputPadY }, theme);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
+			const box = new Box(1, this.outputPadY, (text) => theme.bg("customMessageBg", text));
 			box.addChild(new Text(theme.fg("error", `[${this.entry.customType}] renderer failed: ${message}`), 0, 0));
 			component = box;
 		}
@@ -56,7 +58,9 @@ export class CustomEntryComponent extends Container {
 		}
 
 		this.customComponent = component;
-		this.addChild(new Spacer(1));
+		if (this.outputPadY > 0) {
+			this.addChild(new Spacer(this.outputPadY));
+		}
 		this.addChild(component);
 	}
 }
