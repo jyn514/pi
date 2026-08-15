@@ -439,6 +439,8 @@ export interface ToolRenderContext<TState = any, TArgs = any> {
 	expanded: boolean;
 	/** Whether inline images are currently shown in the TUI. */
 	showImages: boolean;
+	/** Vertical padding configured by the outputPadY setting. */
+	outputPadY: 0 | 1;
 	/** Whether the current result is an error. */
 	isError: boolean;
 }
@@ -1156,6 +1158,8 @@ export type MarkdownTransformer = (markdown: string, context: MarkdownTransformC
 
 export interface EntryRenderOptions {
 	expanded: boolean;
+	/** Vertical padding configured by the outputPadY setting. */
+	outputPadY: number;
 }
 
 export type MessageRenderer<T = unknown> = (

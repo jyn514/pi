@@ -747,7 +747,7 @@ export class SettingsSelectorComponent extends Container {
 		items.splice(outputPaddingIndex + 1, 0, {
 			id: "output-padding-y",
 			label: "Output vertical padding",
-			description: "Vertical padding for user, assistant, custom, and tool messages",
+			description: "Vertical padding for chat output and transient status rows",
 			currentValue: String(config.outputPadY),
 			values: ["0", "1"],
 		});

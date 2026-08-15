@@ -54,6 +54,22 @@ describe("AssistantMessageComponent", () => {
 		expect(compact.render(40)).toHaveLength(1);
 	});
 
+	test("removes spacing between thinking summaries and text in compact mode", () => {
+		initTheme("dark");
+		const message = createAssistantMessage([
+			{ type: "thinking", thinking: "first summary" },
+			{ type: "thinking", thinking: "second summary" },
+			{ type: "text", text: "answer" },
+		]);
+		const component = new AssistantMessageComponent(message, false, undefined, "Thinking...", 1, [], 0);
+		const lines = component.render(80).map((line) => stripAnsi(line));
+
+		expect(lines).toHaveLength(3);
+		expect(lines[0]).toContain("first summary");
+		expect(lines[1]).toContain("second summary");
+		expect(lines[2]).toContain("answer");
+	});
+
 	test("does not add OSC 133 zone markers when assistant message contains tool calls", () => {
 		initTheme("dark");
 

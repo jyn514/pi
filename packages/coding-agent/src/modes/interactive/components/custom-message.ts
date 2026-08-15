@@ -89,7 +89,9 @@ export class CustomMessageComponent extends Container {
 		// Default rendering: label + content
 		const label = theme.fg("customMessageLabel", `\x1b[1m[${this.message.customType}]\x1b[22m`);
 		box.addChild(new Text(label, 0, 0));
-		box.addChild(new Spacer(1));
+		if (this.outputPadY > 0) {
+			box.addChild(new Spacer(this.outputPadY));
+		}
 
 		// Extract text content
 		let text: string;
