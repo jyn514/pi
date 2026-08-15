@@ -1196,6 +1196,8 @@ export interface MessageRenderOptions {
 	expanded: boolean;
 	/** Horizontal padding configured by the outputPad setting. */
 	outputPad: number;
+	/** Vertical padding configured by the outputPadY setting. */
+	outputPadY: number;
 }
 
 export interface MarkdownTransformContext {

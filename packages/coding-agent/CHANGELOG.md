@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `outputPadY` to configure vertical padding for user, assistant, custom, and tool messages, including extension message renderers.
+
 ## [0.84.4] - 2026-08-28
 
 ### New Features

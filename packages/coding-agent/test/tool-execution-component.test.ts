@@ -67,6 +67,34 @@ describe("ToolExecutionComponent parity", () => {
 		expect(rendered).toContain("custom result");
 	});
 
+	test("uses configured vertical output padding", () => {
+		const toolDefinition: ToolDefinition = {
+			...createBaseToolDefinition(),
+			renderCall: () => new Text("custom call", 0, 0),
+		};
+		const padded = new ToolExecutionComponent(
+			"custom_tool",
+			"tool-padded",
+			{},
+			{},
+			toolDefinition,
+			createFakeTui(),
+			process.cwd(),
+		);
+		const compact = new ToolExecutionComponent(
+			"custom_tool",
+			"tool-compact",
+			{},
+			{ outputPadY: 0 },
+			toolDefinition,
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		expect(padded.render(120)).toHaveLength(4);
+		expect(compact.render(120)).toHaveLength(1);
+	});
+
 	test("self-rendered empty tool rows take no layout space", () => {
 		const toolDefinition: ToolDefinition = {
 			...createBaseToolDefinition(),

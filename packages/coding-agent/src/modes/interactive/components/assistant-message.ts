@@ -17,6 +17,7 @@ export class AssistantMessageComponent extends Container {
 	private markdownTheme: MarkdownTheme;
 	private hiddenThinkingLabel: string;
 	private outputPad: number;
+	private outputPadY: number;
 	private markdownTransformers: readonly MarkdownTransformer[];
 	private lastMessage?: AssistantMessage;
 	private hasToolCalls = false;
@@ -29,6 +30,7 @@ export class AssistantMessageComponent extends Container {
 		hiddenThinkingLabel = "Thinking...",
 		outputPad = 1,
 		markdownTransformers: readonly MarkdownTransformer[] = [],
+		outputPadY = 1,
 	) {
 		super();
 
@@ -36,6 +38,7 @@ export class AssistantMessageComponent extends Container {
 		this.markdownTheme = markdownTheme;
 		this.hiddenThinkingLabel = hiddenThinkingLabel;
 		this.outputPad = outputPad;
+		this.outputPadY = outputPadY;
 		this.markdownTransformers = markdownTransformers;
 
 		// Container for text/thinking content
@@ -75,6 +78,13 @@ export class AssistantMessageComponent extends Container {
 		}
 	}
 
+	setOutputPadY(padding: number): void {
+		this.outputPadY = padding;
+		if (this.lastMessage) {
+			this.updateContent(this.lastMessage);
+		}
+	}
+
 	override render(width: number): string[] {
 		const lines = super.render(width);
 		if (this.hasToolCalls || lines.length === 0) {
@@ -97,8 +107,8 @@ export class AssistantMessageComponent extends Container {
 			(c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()),
 		);
 
-		if (hasVisibleContent) {
-			this.contentContainer.addChild(new Spacer(1));
+		if (hasVisibleContent && this.outputPadY > 0) {
+			this.contentContainer.addChild(new Spacer(this.outputPadY));
 		}
 
 		// Render content in order

@@ -44,6 +44,16 @@ describe("AssistantMessageComponent", () => {
 		expect(lines[lines.length - 1].startsWith(OSC133_ZONE_END + OSC133_ZONE_FINAL)).toBe(true);
 	});
 
+	test("uses configured vertical output padding", () => {
+		initTheme("dark");
+		const message = createAssistantMessage([{ type: "text", text: "hello" }]);
+		const padded = new AssistantMessageComponent(message);
+		const compact = new AssistantMessageComponent(message, false, undefined, "Thinking...", 1, [], 0);
+
+		expect(padded.render(40)).toHaveLength(2);
+		expect(compact.render(40)).toHaveLength(1);
+	});
+
 	test("does not add OSC 133 zone markers when assistant message contains tool calls", () => {
 		initTheme("dark");
 

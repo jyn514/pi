@@ -476,26 +476,31 @@ describe("SettingsManager", () => {
 		expect(reloadedManager.getFullscreenCopyOnSelect()).toBe(true);
 	});
 
-	describe("outputPad", () => {
-		it("should default to 1 and persist binary values", async () => {
+	describe("output padding", () => {
+		it("defaults to 1 and persists binary values", async () => {
 			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getOutputPad()).toBe(1);
+			expect(manager.getOutputPadY()).toBe(1);
 
 			manager.setOutputPad(0);
+			manager.setOutputPadY(0);
 			await manager.flush();
 
 			expect(manager.getOutputPad()).toBe(0);
+			expect(manager.getOutputPadY()).toBe(0);
 			const savedSettings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8"));
 			expect(savedSettings.outputPad).toBe(0);
+			expect(savedSettings.outputPadY).toBe(0);
 		});
 
-		it("should treat unsupported outputPad values as default padding", () => {
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ outputPad: 2 }));
+		it("treats unsupported values as default padding", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ outputPad: 2, outputPadY: 2 }));
 
 			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getOutputPad()).toBe(1);
+			expect(manager.getOutputPadY()).toBe(1);
 		});
 	});
 
