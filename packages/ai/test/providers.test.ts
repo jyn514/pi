@@ -382,6 +382,30 @@ describe("createProvider", () => {
 		expect(calls).toEqual(["a:model-a", "b:model-b"]);
 	});
 
+	it("preserves provider-event observers through completeSimple", async () => {
+		let observedCallback: unknown;
+		const eventModel = { ...testModel("api-a", "model-a"), provider: "event-provider" };
+		const provider = createProvider({
+			id: "event-provider",
+			auth: { apiKey: { name: "Test", resolve: async () => ({ auth: {} }) } },
+			models: [eventModel],
+			api: {
+				...recordingStreams("event", []),
+				streamSimple: (model, requestContext, options) => {
+					observedCallback = options?.onProviderEvent;
+					return recordingStreams("event", []).streamSimple(model, requestContext, options);
+				},
+			},
+		});
+		const models = createModels();
+		models.setProvider(provider);
+		const onProviderEvent = () => {};
+
+		await models.completeSimple(eventModel, context, { onProviderEvent });
+
+		expect(observedCallback).toBe(onProviderEvent);
+	});
+
 	it("merges provider-resolved env into stream options", async () => {
 		let capturedEnv: Record<string, string> | undefined;
 		let capturedApiKey: string | undefined;

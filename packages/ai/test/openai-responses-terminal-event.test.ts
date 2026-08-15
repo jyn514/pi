@@ -204,6 +204,41 @@ async function* createPhasedMessageEvents(
 }
 
 describe("OpenAI Responses terminal event handling", () => {
+	it("delivers native events before normalization and propagates observer errors", async () => {
+		const model = createModel();
+		const output = createOutput(model);
+		const stream = new AssistantMessageEventStream();
+		const observed: unknown[] = [];
+
+		await processResponsesStream(createCompletedEvents(), output, stream, model, {
+			onProviderEvent: (event) => observed.push(event),
+		});
+
+		expect(observed).toEqual([
+			{
+				provider: "openai",
+				api: "openai-responses",
+				model: "gpt-5-mini",
+				type: "response.completed",
+				payload: expect.objectContaining({ type: "response.completed" }),
+			},
+		]);
+
+		await expect(
+			processResponsesStream(
+				createCompletedEvents(),
+				createOutput(model),
+				new AssistantMessageEventStream(),
+				model,
+				{
+					onProviderEvent: () => {
+						throw new Error("observer failed");
+					},
+				},
+			),
+		).rejects.toThrow("observer failed");
+	});
+
 	it("rejects streams that end before a terminal response event", async () => {
 		const model = createModel();
 		const output = createOutput(model);

@@ -991,6 +991,21 @@ const response = await models.complete(model, context, {
 
 The callback is supported by `stream`, `complete`, `streamSimple`, and `completeSimple`.
 
+### Observing Native Provider Events
+
+Use `onProviderEvent` to observe parsed events from a provider's native response stream before Pi normalizes them. This supports provider-native features whose metadata is not represented by `AssistantMessage`, such as grounding, citations, and server-side tools.
+
+```typescript
+const events = [];
+const response = await models.complete(model, context, {
+  onProviderEvent: (event) => {
+    events.push(event);
+  }
+});
+```
+
+The callback is synchronous. Its `payload` is provider-specific and may contain sensitive data. Pi does not add these transient events to messages or sessions; storing them is the caller's responsibility. Throwing from the callback fails the request. Providers without native stream events may ignore this option.
+
 ## Custom Providers
 
 ### createProvider()
