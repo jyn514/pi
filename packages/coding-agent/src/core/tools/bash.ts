@@ -251,6 +251,7 @@ function rebuildBashResultRenderComponent(
 	},
 	options: ToolRenderResultOptions,
 	showImages: boolean,
+	outputPadY: 0 | 1,
 	startedAt: number | undefined,
 	endedAt: number | undefined,
 ): void {
@@ -274,7 +275,7 @@ function rebuildBashResultRenderComponent(
 			.join("\n");
 
 		if (options.expanded) {
-			component.addChild(new Text(`\n${styledOutput}`, 0, 0));
+			component.addChild(new Text(`${outputPadY > 0 ? "\n" : ""}${styledOutput}`, 0, 0));
 		} else {
 			component.addChild({
 				render: (width: number) => {
@@ -288,9 +289,13 @@ function rebuildBashResultRenderComponent(
 						const hint =
 							theme.fg("muted", `... (${state.cachedSkipped} earlier lines,`) +
 							` ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
-						return ["", truncateToWidth(hint, width, "..."), ...(state.cachedLines ?? [])];
+						return [
+							...(outputPadY > 0 ? [""] : []),
+							truncateToWidth(hint, width, "..."),
+							...(state.cachedLines ?? []),
+						];
 					}
-					return ["", ...(state.cachedLines ?? [])];
+					return [...(outputPadY > 0 ? [""] : []), ...(state.cachedLines ?? [])];
 				},
 				invalidate: () => {
 					state.cachedWidth = undefined;
@@ -315,13 +320,21 @@ function rebuildBashResultRenderComponent(
 				);
 			}
 		}
-		component.addChild(new Text(`\n${theme.fg("warning", `[${warnings.join(". ")}]`)}`, 0, 0));
+		component.addChild(
+			new Text(`${outputPadY > 0 ? "\n" : ""}${theme.fg("warning", `[${warnings.join(". ")}]`)}`, 0, 0),
+		);
 	}
 
 	if (startedAt !== undefined) {
 		const label = options.isPartial ? "Elapsed" : "Took";
 		const endTime = endedAt ?? Date.now();
-		component.addChild(new Text(`\n${theme.fg("muted", `${label} ${formatDuration(endTime - startedAt)}`)}`, 0, 0));
+		component.addChild(
+			new Text(
+				`${outputPadY > 0 ? "\n" : ""}${theme.fg("muted", `${label} ${formatDuration(endTime - startedAt)}`)}`,
+				0,
+				0,
+			),
+		);
 	}
 }
 
@@ -507,6 +520,7 @@ export function createShellToolDefinition(
 				result as any,
 				options,
 				context.showImages,
+				context.outputPadY,
 				state.startedAt,
 				state.endedAt,
 			);

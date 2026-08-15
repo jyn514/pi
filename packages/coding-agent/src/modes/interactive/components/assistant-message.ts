@@ -155,7 +155,7 @@ export class AssistantMessageComponent extends Container {
 					// Render each run of thinking blocks as one Markdown section.
 					this.contentContainer.addChild(
 						new Markdown(
-							thinkingBlocks.join("\n\n"),
+							thinkingBlocks.join(this.outputPadY === 0 ? "  \n" : "\n\n"),
 							this.outputPad,
 							0,
 							this.markdownTheme,
@@ -173,8 +173,8 @@ export class AssistantMessageComponent extends Container {
 						),
 					);
 				}
-				if (hasVisibleContentAfter) {
-					this.contentContainer.addChild(new Spacer(1));
+				if (hasVisibleContentAfter && this.outputPadY > 0) {
+					this.contentContainer.addChild(new Spacer(this.outputPadY));
 				}
 			}
 		}
@@ -185,7 +185,9 @@ export class AssistantMessageComponent extends Container {
 		const hasToolCalls = message.content.some((c) => c.type === "toolCall");
 		this.hasToolCalls = hasToolCalls;
 		if (message.stopReason === "length") {
-			this.contentContainer.addChild(new Spacer(1));
+			if (this.outputPadY > 0) {
+				this.contentContainer.addChild(new Spacer(this.outputPadY));
+			}
 			this.contentContainer.addChild(
 				new Text(theme.fg("error", "Response was truncated before completion."), this.outputPad, 0),
 			);
@@ -195,11 +197,15 @@ export class AssistantMessageComponent extends Container {
 					message.errorMessage && message.errorMessage !== "Request was aborted"
 						? message.errorMessage
 						: "Operation aborted";
-				this.contentContainer.addChild(new Spacer(1));
+				if (this.outputPadY > 0) {
+					this.contentContainer.addChild(new Spacer(this.outputPadY));
+				}
 				this.contentContainer.addChild(new Text(theme.fg("error", abortMessage), this.outputPad, 0));
 			} else if (message.stopReason === "error") {
 				const errorMsg = message.errorMessage || "Unknown error";
-				this.contentContainer.addChild(new Spacer(1));
+				if (this.outputPadY > 0) {
+					this.contentContainer.addChild(new Spacer(this.outputPadY));
+				}
 				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), this.outputPad, 0));
 			}
 		}

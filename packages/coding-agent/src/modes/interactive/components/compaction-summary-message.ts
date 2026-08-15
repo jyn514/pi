@@ -11,11 +11,13 @@ export class CompactionSummaryMessageComponent extends Box {
 	private expanded = false;
 	private message: CompactionSummaryMessage;
 	private markdownTheme: MarkdownTheme;
+	private outputPadY: number;
 
-	constructor(message: CompactionSummaryMessage, markdownTheme: MarkdownTheme = getMarkdownTheme()) {
-		super(1, 1, (t) => theme.bg("customMessageBg", t));
+	constructor(message: CompactionSummaryMessage, markdownTheme: MarkdownTheme = getMarkdownTheme(), outputPadY = 1) {
+		super(1, outputPadY, (text) => theme.bg("customMessageBg", text));
 		this.message = message;
 		this.markdownTheme = markdownTheme;
+		this.outputPadY = outputPadY;
 		this.updateDisplay();
 	}
 
@@ -35,10 +37,12 @@ export class CompactionSummaryMessageComponent extends Box {
 		const tokenStr = this.message.tokensBefore.toLocaleString();
 		const label = theme.fg("customMessageLabel", `\x1b[1m[compaction]\x1b[22m`);
 		this.addChild(new Text(label, 0, 0));
-		this.addChild(new Spacer(1));
+		if (this.outputPadY > 0) {
+			this.addChild(new Spacer(this.outputPadY));
+		}
 
 		if (this.expanded) {
-			const header = `**Compacted from ${tokenStr} tokens**\n\n`;
+			const header = `**Compacted from ${tokenStr} tokens**${this.outputPadY > 0 ? "\n\n" : "  \n"}`;
 			this.addChild(
 				new Markdown(header + this.message.summary, 0, 0, this.markdownTheme, {
 					color: (text: string) => theme.fg("customMessageText", text),

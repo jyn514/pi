@@ -1622,9 +1622,9 @@ Register a custom TUI renderer for custom entries with your `customType`. Custom
 ```typescript
 import { Box, Text } from "@earendil-works/pi-tui";
 
-pi.registerEntryRenderer("status-card", (entry, { expanded }, theme) => {
+pi.registerEntryRenderer("status-card", (entry, { expanded, outputPadY }, theme) => {
   const data = entry.data as { title: string; count: number };
-  const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
+  const box = new Box(1, outputPadY, (text) => theme.bg("customMessageBg", text));
   box.addChild(new Text(`${theme.bold(data.title)}: ${data.count}`));
   if (expanded) {
     box.addChild(new Text(theme.fg("dim", JSON.stringify(data, null, 2))));

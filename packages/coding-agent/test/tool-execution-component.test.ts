@@ -95,6 +95,27 @@ describe("ToolExecutionComponent parity", () => {
 		expect(compact.render(120)).toHaveLength(1);
 	});
 
+	test("removes internal bash result spacing in compact mode", () => {
+		const tool = createBashToolDefinition(process.cwd(), { exposeSessionEnvironment: false });
+		const component = new ToolExecutionComponent(
+			"bash",
+			"tool-compact-bash",
+			{ command: "date" },
+			{ outputPadY: 0 },
+			tool,
+			createFakeTui(),
+			process.cwd(),
+		);
+		component.markExecutionStarted();
+		component.updateResult({ content: [{ type: "text", text: "08:25:45 CEST" }], isError: false }, false);
+		const lines = component.render(120).map((line) => stripAnsi(line));
+
+		expect(lines).toHaveLength(3);
+		expect(lines[0]).toContain("$ date");
+		expect(lines[1]).toContain("08:25:45 CEST");
+		expect(lines[2]).toContain("Took");
+	});
+
 	test("self-rendered empty tool rows take no layout space", () => {
 		const toolDefinition: ToolDefinition = {
 			...createBaseToolDefinition(),
