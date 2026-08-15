@@ -39,7 +39,8 @@ import {
 	resolveTranscript,
 	resolveTranscriptTools,
 } from "../utils/transcript.ts";
-import { emitProviderEvent } from "../utils/provider-event.ts"
+import { emitProviderEvent } from "../utils/provider-event.ts";
+import { toOpenAIProviderTools } from "../utils/provider-tools.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -572,12 +573,15 @@ function buildRequestBody(
 		body.service_tier = options.serviceTier;
 	}
 
-	if (transcriptTools.requestTools.length > 0) {
-		body.tools = convertResponsesTools(transcriptTools.requestTools, {
-			strict: null,
-			supportsStrictMode,
-			supportsOpenAIGrammarTools,
-		});
+	if (transcriptTools.requestTools.length > 0 || context.providerTools?.length) {
+		body.tools = [
+			...convertResponsesTools(transcriptTools.requestTools, {
+				strict: null,
+				supportsStrictMode,
+				supportsOpenAIGrammarTools,
+			}),
+			...toOpenAIProviderTools(context.providerTools ?? []),
+		] as OpenAITool[];
 	}
 
 	if (options?.reasoningEffort !== undefined) {

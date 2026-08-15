@@ -38,6 +38,7 @@ import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { emitProviderEvent } from "../utils/provider-event.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { toAnthropicProviderTools } from "../utils/provider-tools.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
 import {
@@ -1115,10 +1116,6 @@ function buildParams(
 
 	const toolCacheControl = compat.supportsCacheControlOnTools ? cacheControl : undefined;
 	if (nativeToolChanges) {
-		// Initial tools stay active with the cache breakpoint on the last one. Every later
-		// declaration is deferred and only surfaced by its `tool_addition` block; removed
-		// tools stay declared and are withdrawn by `tool_removal`. The request-level list
-		// therefore only grows, keeping the cached prefix intact across tool changes.
 		const initialNames = new Set(initialTools.map((tool) => tool.name));
 		const laterTools = getDeclaredTools(context.messages).filter((tool) => !initialNames.has(tool.name));
 		params.tools = [
@@ -1136,17 +1133,21 @@ function buildParams(
 				compat.supportsEagerToolInputStreaming,
 				compat.supportsStrictTools,
 			).map((tool) => ({ ...tool, defer_loading: true })),
-		];
+			...toAnthropicProviderTools(context.providerTools ?? []),
+		] as Anthropic.Messages.Tool[];
 	} else {
 		const tools = getCurrentTools(context.messages);
-		if (tools.length > 0) {
-			params.tools = convertTools(
-				tools,
-				isOAuthToken,
-				compat.supportsEagerToolInputStreaming,
-				compat.supportsStrictTools,
-				toolCacheControl,
-			);
+		if (tools.length > 0 || context.providerTools?.length) {
+			params.tools = [
+				...convertTools(
+					tools,
+					isOAuthToken,
+					compat.supportsEagerToolInputStreaming,
+					compat.supportsStrictTools,
+					toolCacheControl,
+				),
+				...toAnthropicProviderTools(context.providerTools ?? []),
+			] as Anthropic.Messages.Tool[];
 		}
 	}
 

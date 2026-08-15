@@ -573,16 +573,26 @@ export interface ToolReference {
 	name: string;
 }
 
-/**
- * Request input accepted by the public stream entry points (`Models.stream()`,
- * `streamSimple()`, ...). `systemPrompt` and `tools` are shorthand for a leading
- * system message; `normalizeContext()` folds them into one before the request
- * reaches a provider.
- */
+export interface WebSearchProviderTool {
+	type: "web_search";
+	/** Restrict results to these domains when the provider supports domain filtering. */
+	allowedDomains?: string[];
+	/** Exclude these domains when the provider supports domain filtering. */
+	blockedDomains?: string[];
+	/** Maximum provider-side searches for APIs that expose such a limit. */
+	maxUses?: number;
+	/** Requested search context size for APIs that expose such a control. */
+	searchContextSize?: "low" | "medium" | "high";
+}
+
+export type ProviderTool = WebSearchProviderTool;
+
 export interface Context {
 	systemPrompt?: string;
 	messages: Message[];
 	tools?: Tool[];
+	/** Tools executed by the provider rather than by the local agent loop. */
+	providerTools?: ProviderTool[];
 }
 
 declare const transcriptContextBrand: unique symbol;
@@ -595,6 +605,7 @@ declare const transcriptContextBrand: unique symbol;
  */
 export type TranscriptContext = {
 	messages: Message[];
+	providerTools?: ProviderTool[];
 	readonly [transcriptContextBrand]: true;
 };
 

@@ -30,7 +30,7 @@ export function createInitialSystemMessage(
 export function normalizeContext(context: Context): TranscriptContext {
 	const initialMessage = createInitialSystemMessage(context.systemPrompt, context.tools);
 	const messages = initialMessage ? [initialMessage, ...context.messages] : context.messages;
-	return { messages } as TranscriptContext;
+	return { messages, providerTools: context.providerTools } as TranscriptContext;
 }
 
 /**
@@ -108,7 +108,7 @@ export function getCurrentSystemPrompt(messages: TranscriptMessages): string {
 export function collapseSystemMessages(context: TranscriptContext): TranscriptContext {
 	const head = getCurrentSystemMessage(context.messages);
 	const messages = context.messages.filter((message) => message.role !== "system");
-	return { messages: head ? [head, ...messages] : messages } as TranscriptContext;
+	return { messages: head ? [head, ...messages] : messages, providerTools: context.providerTools } as TranscriptContext;
 }
 
 /** Keep later system messages in place when the model accepts them; otherwise collapse them. */

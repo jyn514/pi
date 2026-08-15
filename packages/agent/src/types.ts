@@ -6,6 +6,7 @@ import type {
 	ImageContent,
 	Message,
 	Model,
+	ProviderTool,
 	SimpleStreamOptions,
 	TextContent,
 	Tool,
@@ -349,19 +350,13 @@ export interface AgentState {
 	model: Model<any>;
 	/** Requested reasoning level for future turns. */
 	thinkingLevel: ThinkingLevel;
-	/**
-	 * Executable tools. Assigning a new array copies the top-level array.
-	 *
-	 * Differences from the tools declared in the transcript are announced to the model
-	 * with a system message before the next request.
-	 */
+	/** Available locally executed tools. Assigning a new array copies the top-level array. */
 	set tools(tools: AgentTool<any>[]);
 	get tools(): AgentTool<any>[];
-	/**
-	 * Conversation transcript. Assigning a new array copies the top-level array.
-	 *
-	 * System messages in the transcript carry the prompt and tool declarations.
-	 */
+	/** Available provider-executed tools. Assigning a new array copies the top-level array. */
+	set providerTools(tools: ProviderTool[]);
+	get providerTools(): ProviderTool[];
+	/** Conversation transcript. Assigning a new array copies the top-level array. */
 	set messages(messages: AgentMessage[]);
 	get messages(): AgentMessage[];
 	/**
@@ -433,8 +428,10 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 export interface AgentContext {
 	/** Transcript visible to the model. */
 	messages: AgentMessage[];
-	/** Tools available for execution in this run. */
+	/** Locally executed tools available for this run. */
 	tools?: AgentTool<any>[];
+	/** Provider-executed tools available for this run. */
+	providerTools?: ProviderTool[];
 }
 
 /**

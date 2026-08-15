@@ -352,7 +352,11 @@ async function streamAssistantResponse(
 	// Convert to LLM-compatible messages (AgentMessage[] → Message[])
 	const llmMessages = await config.convertToLlm(messages);
 
-	const llmContext = normalizeContext({ messages: llmMessages });
+	const llmContext = normalizeContext({
+		messages: llmMessages,
+		tools: context.tools,
+		providerTools: context.providerTools,
+	});
 
 	// Resolve API key (important for expiring tokens)
 	const resolvedApiKey =

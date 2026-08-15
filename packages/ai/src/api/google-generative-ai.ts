@@ -24,6 +24,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { emitProviderEvent } from "../utils/provider-event.ts";
+import { toGoogleProviderTools } from "../utils/provider-tools.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText } from "../utils/text.ts";
 import { collapseSystemMessages, getCurrentTools, getInitialSystemMessage } from "../utils/transcript.ts";
@@ -393,8 +394,11 @@ function buildParams(
 	const config: GenerateContentConfig = {
 		...(Object.keys(generationConfig).length > 0 && generationConfig),
 		...(systemInstruction && { systemInstruction: sanitizeSurrogates(systemInstruction) }),
-		...(currentTools.length > 0 && {
-			tools: convertTools(currentTools, false, supportsStrictMode),
+		...((currentTools.length > 0 || context.providerTools?.length) && {
+			tools: [
+				...(convertTools(currentTools, false, supportsStrictMode) ?? []),
+				...toGoogleProviderTools(context.providerTools ?? []),
+			],
 		}),
 		...(functionCallingMode !== undefined && {
 			toolConfig: { functionCallingConfig: { mode: functionCallingMode } },

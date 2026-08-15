@@ -17,6 +17,7 @@ import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { getDeclaredTools, resolveTranscript, resolveTranscriptTools } from "../utils/transcript.ts";
+import { toOpenAIProviderTools } from "../utils/provider-tools.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
@@ -317,11 +318,14 @@ function buildParams(
 		params.temperature = options?.temperature;
 	}
 
-	if (transcriptTools.requestTools.length > 0) {
-		params.tools = convertResponsesTools(transcriptTools.requestTools, {
-			supportsStrictMode: model.compat?.supportsStrictMode ?? true,
-			supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
-		});
+	if (transcriptTools.requestTools.length > 0 || context.providerTools?.length) {
+		params.tools = [
+			...convertResponsesTools(transcriptTools.requestTools, {
+				supportsStrictMode: model.compat?.supportsStrictMode ?? true,
+				supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
+			}),
+			...toOpenAIProviderTools(context.providerTools ?? []),
+		] as ResponseCreateParamsStreaming["tools"];
 	}
 	if (options?.toolChoice !== undefined) {
 		params.tool_choice = options.toolChoice;

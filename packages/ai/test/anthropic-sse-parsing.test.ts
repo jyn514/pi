@@ -328,9 +328,9 @@ describe("Anthropic raw SSE parsing", () => {
 	});
 	it("delivers native events before normalization and fails when the observer throws", async () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [{ role: "user", content: "Say hello.", timestamp: Date.now() }],
-		};
+		});
 		const observed: unknown[] = [];
 		const result = await streamAnthropic(model, context, {
 			client: createFakeAnthropicClient(createSseResponse(minimalAnthropicEvents)),

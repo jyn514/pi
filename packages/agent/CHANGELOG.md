@@ -2,14 +2,10 @@
 
 ## [Unreleased]
 
-## [0.85.1] - 2026-09-05
+### Added
 
-## [0.85.0] - 2026-09-04
+- Added provider-executed tools to agent state and model request contexts without routing them through the local tool executor.
 
-### Fixed
-
-- Fixed proxied assistant responses dropping persisted provider-native thinking levels.
-- Fixed the write tool reporting UTF-16 code-unit counts as byte counts by removing the misleading count ([#8979](https://github.com/earendil-works/pi/issues/8979)).
 
 ## [0.84.4] - 2026-08-28
 

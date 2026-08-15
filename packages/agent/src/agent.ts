@@ -80,6 +80,7 @@ export type AgentInitialState = Partial<
 
 function createMutableAgentState(initialState?: AgentInitialState): MutableAgentState {
 	let tools = initialState?.tools?.slice() ?? [];
+	let providerTools = initialState?.providerTools?.slice() ?? [];
 	let messages = initialState?.messages?.slice() ?? [];
 	const initialMessage = createInitialSystemMessage(initialState?.systemPrompt, tools.map(toToolDeclaration));
 	if (messages[0]?.role !== "system" && initialMessage) messages.unshift(initialMessage);
@@ -95,6 +96,12 @@ function createMutableAgentState(initialState?: AgentInitialState): MutableAgent
 		},
 		set tools(nextTools: AgentTool<any>[]) {
 			tools = nextTools.slice();
+		},
+		get providerTools() {
+			return providerTools;
+		},
+		set providerTools(nextTools) {
+			providerTools = nextTools.slice();
 		},
 		get messages() {
 			return messages;
@@ -454,6 +461,7 @@ export class Agent {
 		return {
 			messages: this._state.messages.slice(),
 			tools: this._state.tools.slice(),
+			providerTools: this._state.providerTools.slice(),
 		};
 	}
 

@@ -25,7 +25,9 @@ import type {
 	OAuthCredentials,
 	OAuthLoginCallbacks,
 	Provider,
+	ProviderEvent,
 	ProviderHeaders,
+	ProviderTool,
 	RefreshModelsContext,
 	SimpleStreamOptions,
 	TextContent,
@@ -692,6 +694,13 @@ export interface ContextEvent {
 	messages: AgentMessage[];
 }
 
+/** Fired for each parsed provider-native response event. */
+export interface ProviderEventEvent {
+	type: "provider_event";
+	/** Parsed provider-native event. Transient unless the extension persists derived data. */
+	event: ProviderEvent;
+}
+
 /** Fired before a provider request is sent. Can replace the payload. */
 export interface BeforeProviderRequestEvent {
 	type: "before_provider_request";
@@ -1090,6 +1099,7 @@ export type ExtensionEvent =
 	| ResourcesDiscoverEvent
 	| SessionEvent
 	| ContextEvent
+	| ProviderEventEvent
 	| BeforeProviderRequestEvent
 	| BeforeProviderHeadersEvent
 	| AfterProviderResponseEvent
@@ -1293,6 +1303,7 @@ export interface ExtensionAPI {
 	): () => void;
 	on(event: "session_tree", handler: ExtensionHandler<SessionTreeEvent>): () => void;
 	on(event: "context", handler: ExtensionHandler<ContextEvent, ContextEventResult>): () => void;
+	on(event: "provider_event", handler: (event: ProviderEventEvent, ctx: ExtensionContext) => void): void;
 	on(
 		event: "before_provider_request",
 		handler: ExtensionHandler<BeforeProviderRequestEvent, BeforeProviderRequestEventResult>,
@@ -1331,6 +1342,9 @@ export interface ExtensionAPI {
 	registerTool<TParams extends TSchema = TSchema, TDetails = unknown, TState = any>(
 		tool: ToolDefinition<TParams, TDetails, TState>,
 	): void;
+
+	/** Register a tool that the active model provider executes inside its request. */
+	registerProviderTool(tool: ProviderTool): void;
 
 	// =========================================================================
 	// Command, Shortcut, Flag Registration
@@ -1798,6 +1812,7 @@ export interface Extension {
 	sourceInfo: SourceInfo;
 	handlers: Map<string, HandlerFn[]>;
 	tools: Map<string, RegisteredTool>;
+	providerTools?: ProviderTool[];
 	messageRenderers: Map<string, MessageRenderer>;
 	markdownTransformer?: MarkdownTransformer;
 	entryRenderers?: Map<string, EntryRenderer>;
