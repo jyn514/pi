@@ -303,17 +303,67 @@ describe("Coding Agent Tools", () => {
 			expect(applyPatch(originalContent, result.details.patch)).toBe("Hello, testing!");
 		});
 
-		it("should fail if text not found", async () => {
+		it("should report missing text without extension diagnostics", async () => {
 			const testFile = join(testDir, "edit-test.txt");
-			const originalContent = "Hello, world!";
-			writeFileSync(testFile, originalContent);
+			writeFileSync(testFile, "Hello, world!");
 
 			await expect(
 				editTool.execute("test-call-6", {
 					path: testFile,
-					edits: [{ oldText: "nonexistent", newText: "testing" }],
+					edits: [{ oldText: "Hello,  world!\nnext line", newText: "testing" }],
 				}),
-			).rejects.toThrow(/Could not find the exact text/);
+			).rejects.toThrow(
+				`Could not find the exact text in ${testFile}. The old text must match exactly including all whitespace and newlines.`,
+			);
+		});
+
+		it("should not apply approximate closest matches", async () => {
+			const testFile = join(testDir, "edit-closest-match.txt");
+			const original = "alpha\nshared block\nomega\n";
+			writeFileSync(testFile, original);
+			const edits = [{ oldText: "alpha\nshared  block\nomega", newText: "changed" }];
+			const message = `Could not find the exact text in ${testFile}. The old text must match exactly including all whitespace and newlines.`;
+			await expect(editTool.execute("test-call-closest-match", { path: testFile, edits })).rejects.toThrow(message);
+			expect(await computeEditsDiff(testFile, edits, testDir)).toEqual({ error: message });
+			expect(readFileSync(testFile, "utf-8")).toBe(original);
+		});
+
+		it("should reject whitespace-only oldText when no exact match exists", async () => {
+			const testFile = join(testDir, "edit-whitespace-only.txt");
+			writeFileSync(testFile, "alpha\nbeta\n");
+
+			await expect(
+				editTool.execute("test-call-whitespace-only", {
+					path: testFile,
+					edits: [{ oldText: "   ", newText: "inserted" }],
+				}),
+			).rejects.toThrow(`Could not find the exact text in ${testFile}.`);
+			expect(readFileSync(testFile, "utf-8")).toBe("alpha\nbeta\n");
+		});
+
+		it("should count exact whitespace duplicates without searching for empty normalized text", async () => {
+			const testFile = join(testDir, "edit-duplicate-whitespace.txt");
+			const original = "a   b   c";
+			writeFileSync(testFile, original);
+			await expect(
+				editTool.execute("duplicate-whitespace", {
+					path: testFile,
+					edits: [{ oldText: "   ", newText: " " }],
+				}),
+			).rejects.toThrow("Found 2 occurrences");
+			expect(readFileSync(testFile, "utf-8")).toBe(original);
+		});
+
+		it("should replace whitespace-only oldText when an exact unique match exists", async () => {
+			const testFile = join(testDir, "edit-exact-whitespace.txt");
+			writeFileSync(testFile, "alpha   beta\n");
+
+			await editTool.execute("test-call-exact-whitespace", {
+				path: testFile,
+				edits: [{ oldText: "   ", newText: " " }],
+			});
+
+			expect(readFileSync(testFile, "utf-8")).toBe("alpha beta\n");
 		});
 
 		it("should include ENOENT when the edit target does not exist", async () => {
@@ -327,17 +377,32 @@ describe("Coding Agent Tools", () => {
 			).rejects.toThrow(`Could not edit file: ${missingFile}. Error code: ENOENT.`);
 		});
 
-		it("should fail if text appears multiple times", async () => {
+		it("should reject duplicate matches", async () => {
 			const testFile = join(testDir, "edit-test.txt");
-			const originalContent = "foo foo foo";
-			writeFileSync(testFile, originalContent);
+			writeFileSync(testFile, "first\nfoo\nmiddle\nfoo\nlast\n");
 
 			await expect(
 				editTool.execute("test-call-7", {
 					path: testFile,
 					edits: [{ oldText: "foo", newText: "bar" }],
 				}),
-			).rejects.toThrow(/Found 3 occurrences/);
+			).rejects.toThrow(
+				`Found 2 occurrences of the text in ${testFile}. The text must be unique. Please provide more context to make it unique.`,
+			);
+		});
+
+		it("should count all duplicate matches", async () => {
+			const testFile = join(testDir, "edit-many-duplicates.txt");
+			writeFileSync(testFile, "foo\nfoo\nfoo\nfoo\nfoo\nfoo\nfoo\n");
+
+			await expect(
+				editTool.execute("test-call-many-duplicates", {
+					path: testFile,
+					edits: [{ oldText: "foo", newText: "bar" }],
+				}),
+			).rejects.toThrow(
+				`Found 7 occurrences of the text in ${testFile}. The text must be unique. Please provide more context to make it unique.`,
+			);
 		});
 
 		it("should replace multiple disjoint regions in one call", async () => {
@@ -436,7 +501,9 @@ describe("Coding Agent Tools", () => {
 						{ oldText: "missing\n", newText: "MISSING\n" },
 					],
 				}),
-			).rejects.toThrow(/Could not find/);
+			).rejects.toThrow(
+				`Could not find edits[1] in ${testFile}. The oldText must match exactly including all whitespace and newlines.`,
+			);
 
 			expect(readFileSync(testFile, "utf-8")).toBe(originalContent);
 		});
