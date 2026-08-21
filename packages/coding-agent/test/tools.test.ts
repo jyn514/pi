@@ -283,17 +283,43 @@ describe("Coding Agent Tools", () => {
 			expect(applyPatch(originalContent, result.details.patch)).toBe("Hello, testing!");
 		});
 
-		it("should fail if text not found", async () => {
+		it("should identify the missing oldText", async () => {
 			const testFile = join(testDir, "edit-test.txt");
-			const originalContent = "Hello, world!";
-			writeFileSync(testFile, originalContent);
+			writeFileSync(testFile, "Hello, world!");
 
 			await expect(
 				editTool.execute("test-call-6", {
 					path: testFile,
-					edits: [{ oldText: "nonexistent", newText: "testing" }],
+					edits: [{ oldText: "Hello,  world!\nnext line", newText: "testing" }],
 				}),
-			).rejects.toThrow(/Could not find the exact text/);
+			).rejects.toThrow(
+				`Could not find oldText in ${testFile}. Expected "Hello,  world!\\nnext line". No exact or normalized match was found; check internal whitespace and newlines, or read the file again if it may have changed.`,
+			);
+		});
+
+		it("should reject whitespace-only oldText when no exact match exists", async () => {
+			const testFile = join(testDir, "edit-whitespace-only.txt");
+			writeFileSync(testFile, "alpha\nbeta\n");
+
+			await expect(
+				editTool.execute("test-call-whitespace-only", {
+					path: testFile,
+					edits: [{ oldText: "   ", newText: "inserted" }],
+				}),
+			).rejects.toThrow(`Could not find oldText in ${testFile}. Expected "   ".`);
+			expect(readFileSync(testFile, "utf-8")).toBe("alpha\nbeta\n");
+		});
+
+		it("should replace whitespace-only oldText when an exact unique match exists", async () => {
+			const testFile = join(testDir, "edit-exact-whitespace.txt");
+			writeFileSync(testFile, "alpha   beta\n");
+
+			await editTool.execute("test-call-exact-whitespace", {
+				path: testFile,
+				edits: [{ oldText: "   ", newText: " " }],
+			});
+
+			expect(readFileSync(testFile, "utf-8")).toBe("alpha beta\n");
 		});
 
 		it("should include ENOENT when the edit target does not exist", async () => {
@@ -307,17 +333,32 @@ describe("Coding Agent Tools", () => {
 			).rejects.toThrow(`Could not edit file: ${missingFile}. Error code: ENOENT.`);
 		});
 
-		it("should fail if text appears multiple times", async () => {
+		it("should report where duplicate matches start", async () => {
 			const testFile = join(testDir, "edit-test.txt");
-			const originalContent = "foo foo foo";
-			writeFileSync(testFile, originalContent);
+			writeFileSync(testFile, "first\nfoo\nmiddle\nfoo\nlast\n");
 
 			await expect(
 				editTool.execute("test-call-7", {
 					path: testFile,
 					edits: [{ oldText: "foo", newText: "bar" }],
 				}),
-			).rejects.toThrow(/Found 3 occurrences/);
+			).rejects.toThrow(
+				`Found 2 occurrences of oldText in ${testFile}, starting at lines 2, 4. Provide more surrounding context so the match is unique.`,
+			);
+		});
+
+		it("should cap reported duplicate locations", async () => {
+			const testFile = join(testDir, "edit-many-duplicates.txt");
+			writeFileSync(testFile, "foo\nfoo\nfoo\nfoo\nfoo\nfoo\nfoo\n");
+
+			await expect(
+				editTool.execute("test-call-many-duplicates", {
+					path: testFile,
+					edits: [{ oldText: "foo", newText: "bar" }],
+				}),
+			).rejects.toThrow(
+				`Found 7 occurrences of oldText in ${testFile}, starting at lines 1, 2, 3, 4, 5, and 2 more. Provide more surrounding context so the match is unique.`,
+			);
 		});
 
 		it("should replace multiple disjoint regions in one call", async () => {
@@ -416,7 +457,7 @@ describe("Coding Agent Tools", () => {
 						{ oldText: "missing\n", newText: "MISSING\n" },
 					],
 				}),
-			).rejects.toThrow(/Could not find/);
+			).rejects.toThrow(`Could not find edits[1].oldText in ${testFile}. Expected "missing\\n".`);
 
 			expect(readFileSync(testFile, "utf-8")).toBe(originalContent);
 		});
@@ -1034,7 +1075,7 @@ describe("edit tool fuzzy matching", () => {
 				path: testFile,
 				edits: [{ oldText: "this does not exist", newText: "replacement" }],
 			}),
-		).rejects.toThrow(/Could not find the exact text/);
+		).rejects.toThrow(/Could not find oldText/);
 	});
 
 	it("should detect duplicates after fuzzy normalization", async () => {
