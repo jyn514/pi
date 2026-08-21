@@ -220,6 +220,15 @@ export function fuzzyFindText(content: string, oldText: string): FuzzyMatchResul
 	// Try fuzzy match - work entirely in normalized space
 	const fuzzyContent = normalizeForFuzzyMatch(content);
 	const fuzzyOldText = normalizeForFuzzyMatch(oldText);
+	if (fuzzyOldText.length === 0) {
+		return {
+			found: false,
+			index: -1,
+			matchLength: 0,
+			usedFuzzyMatch: false,
+			contentForReplacement: content,
+		};
+	}
 	const fuzzyIndex = fuzzyContent.indexOf(fuzzyOldText);
 
 	if (fuzzyIndex === -1) {
@@ -244,31 +253,62 @@ export function fuzzyFindText(content: string, oldText: string): FuzzyMatchResul
 	};
 }
 
-function countOccurrences(content: string, oldText: string): number {
-	const fuzzyContent = normalizeForFuzzyMatch(content);
-	const fuzzyOldText = normalizeForFuzzyMatch(oldText);
-	return fuzzyContent.split(fuzzyOldText).length - 1;
+/** Strip UTF-8 BOM if present, return both the BOM (if any) and the text without it */
+export function stripBom(content: string): { bom: string; text: string } {
+	return content.startsWith("\uFEFF") ? { bom: "\uFEFF", text: content.slice(1) } : { bom: "", text: content };
 }
 
-function getNotFoundError(path: string, editIndex: number, totalEdits: number): Error {
-	if (totalEdits === 1) {
-		return new Error(
-			`Could not find the exact text in ${path}. The old text must match exactly including all whitespace and newlines.`,
-		);
+const MAX_ERROR_PREVIEW_LENGTH = 200;
+const MAX_REPORTED_MATCH_LINES = 5;
+
+function formatOldTextPreview(oldText: string): string {
+	const preview =
+		oldText.length > MAX_ERROR_PREVIEW_LENGTH ? `${oldText.slice(0, MAX_ERROR_PREVIEW_LENGTH)}…` : oldText;
+	return JSON.stringify(preview);
+}
+
+interface OccurrenceSummary {
+	count: number;
+	lines: number[];
+}
+
+function summarizeOccurrences(content: string, oldText: string): OccurrenceSummary {
+	const fuzzyContent = normalizeForFuzzyMatch(content);
+	const fuzzyOldText = normalizeForFuzzyMatch(oldText);
+	const matchContent = fuzzyOldText.length === 0 ? content : fuzzyContent;
+	const matchText = fuzzyOldText.length === 0 ? oldText : fuzzyOldText;
+	const lines: number[] = [];
+	let count = 0;
+	let line = 1;
+	let scannedIndex = 0;
+	let searchIndex = 0;
+
+	while (true) {
+		const matchIndex = matchContent.indexOf(matchText, searchIndex);
+		if (matchIndex === -1) return { count, lines };
+		for (let i = scannedIndex; i < matchIndex; i++) {
+			if (matchContent[i] === "\n") line++;
+		}
+		count++;
+		if (lines.length < MAX_REPORTED_MATCH_LINES) lines.push(line);
+		scannedIndex = matchIndex;
+		searchIndex = matchIndex + matchText.length;
 	}
+}
+
+function getNotFoundError(path: string, editIndex: number, totalEdits: number, oldText: string): Error {
+	const target = totalEdits === 1 ? "oldText" : `edits[${editIndex}].oldText`;
 	return new Error(
-		`Could not find edits[${editIndex}] in ${path}. The oldText must match exactly including all whitespace and newlines.`,
+		`Could not find ${target} in ${path}. Expected ${formatOldTextPreview(oldText)}. No exact or normalized match was found; check internal whitespace and newlines, or read the file again if it may have changed.`,
 	);
 }
 
-function getDuplicateError(path: string, editIndex: number, totalEdits: number, occurrences: number): Error {
-	if (totalEdits === 1) {
-		return new Error(
-			`Found ${occurrences} occurrences of the text in ${path}. The text must be unique. Please provide more context to make it unique.`,
-		);
-	}
+function getDuplicateError(path: string, editIndex: number, totalEdits: number, summary: OccurrenceSummary): Error {
+	const target = totalEdits === 1 ? "oldText" : `edits[${editIndex}].oldText`;
+	const remainingCount = summary.count - summary.lines.length;
+	const lineSummary = `${summary.lines.join(", ")}${remainingCount > 0 ? `, and ${remainingCount} more` : ""}`;
 	return new Error(
-		`Found ${occurrences} occurrences of edits[${editIndex}] in ${path}. Each oldText must be unique. Please provide more context to make it unique.`,
+		`Found ${summary.count} occurrences of ${target} in ${path}, starting at lines ${lineSummary}. Provide more surrounding context so the match is unique.`,
 	);
 }
 
@@ -322,12 +362,12 @@ export function applyEditsToNormalizedContent(
 		const edit = normalizedEdits[i];
 		const matchResult = fuzzyFindText(replacementBaseContent, edit.oldText);
 		if (!matchResult.found) {
-			throw getNotFoundError(path, i, normalizedEdits.length);
+			throw getNotFoundError(path, i, normalizedEdits.length, edit.oldText);
 		}
 
-		const occurrences = countOccurrences(replacementBaseContent, edit.oldText);
-		if (occurrences > 1) {
-			throw getDuplicateError(path, i, normalizedEdits.length, occurrences);
+		const occurrenceSummary = summarizeOccurrences(replacementBaseContent, edit.oldText);
+		if (occurrenceSummary.count > 1) {
+			throw getDuplicateError(path, i, normalizedEdits.length, occurrenceSummary);
 		}
 
 		matchedEdits.push({
