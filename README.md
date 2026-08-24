@@ -104,11 +104,14 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [AGENTS.m
 ```bash
 npm install --ignore-scripts  # Install all dependencies without running lifecycle scripts
 npm run build         # Refresh model data, then build all packages
+npm run hydrate:pinned-model-data # Restore model data from the lockfile-pinned pi-ai release
 npm run build:offline # Rebuild using existing model data without network access
 npm run check         # Lint, format, and type check
 ./test.sh            # Run tests (skips LLM-dependent tests without API keys)
 ./pi-test.sh         # Run pi from sources (can be run from any directory)
 ```
+
+If pinned model-data installation and rollback both fail, the original data remains in the backup directory reported by the error for manual recovery.
 
 ### Using local packages outside the monorepo
 
