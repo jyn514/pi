@@ -5,7 +5,7 @@ import { typesafeSystemOneApi } from "../api/typesafe-system-one.lazy.ts";
 import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
 import { loadGitHubCopilotOAuth } from "../auth/oauth/load.ts";
 import { createProvider, type Provider } from "../models.ts";
-import type { ProviderClassifier } from "../types.ts";
+import type { ClassifierModel, ProviderClassifier } from "../types.ts";
 import { GITHUB_COPILOT_CLASSIFIER_MODELS, GITHUB_COPILOT_MODELS } from "./github-copilot.models.ts";
 
 type GitHubCopilotApi = "anthropic-messages" | "openai-completions" | "openai-responses";
@@ -30,7 +30,10 @@ export function githubCopilotProvider(): Provider<GitHubCopilotApi> {
 			apiKey: envApiKeyAuth("GitHub Copilot token", ["COPILOT_GITHUB_TOKEN"]),
 			oauth: lazyOAuth({ name: "GitHub Copilot", isSubscription: true, load: loadGitHubCopilotOAuth }),
 		},
-		models: [...Object.values(GITHUB_COPILOT_MODELS), ...Object.values(GITHUB_COPILOT_CLASSIFIER_MODELS)],
+		models: [
+			...Object.values(GITHUB_COPILOT_MODELS),
+			...Object.values<ClassifierModel<"typesafe-system-one">>(GITHUB_COPILOT_CLASSIFIER_MODELS),
+		],
 		filterModels: (models, credential) => {
 			if (credential?.type !== "oauth") return models;
 			const availableModelIds = credential.availableModelIds;

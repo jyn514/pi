@@ -59,6 +59,7 @@
 		"clean": "node ../../scripts/package-files.mjs clean dist",
 		"generate-models": "node catalog/generate.ts --strict",
 		"hydrate-model-data": "node catalog/generate.ts --strict --data-only",
+		"hydrate-pinned-model-data": "node scripts/hydrate-pinned-model-data.ts",
 		"generate-model-catalog": "node catalog/generate.ts --strict --json-only --json-output ../../.artifacts/model-catalog",
 		"check:model-data": "node scripts/check-model-data.ts",
 		"build": "npm run generate-models && npm run build:offline",

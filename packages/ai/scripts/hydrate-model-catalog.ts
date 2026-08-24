@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -32,7 +32,9 @@ function isCatalogEntry(value: unknown): value is CatalogEntry {
 /**
  * Hydrate the checkout's provider data files from a published typed catalog
  * (`models.all.json`) without network access. With `validateOnly`, stage and
- * validate the data without replacing the checkout's current data.
+ * validate the data without replacing the checkout's current data. Failed
+ * publication restores the previous data; if rollback fails, the error names
+ * the retained backup for manual recovery.
  */
 export function hydrateModelCatalog(
 	packageRoot: string,
@@ -66,17 +68,44 @@ export function hydrateModelCatalog(
 	const providersDir = join(packageRoot, "src", "providers");
 	const stagingRoot = mkdtempSync(join(providersDir, ".model-hydration-"));
 	const stagedData = join(stagingRoot, "data");
+	const dataDir = join(providersDir, "data");
+	let backup: string | undefined;
+	let rollbackFailure: AggregateError | undefined;
 	try {
 		mkdirSync(stagedData);
 		for (const [name, content] of Object.entries(files)) writeFileSync(join(stagedData, name), content);
 		writeFileSync(join(stagedData, MODEL_DATA_MANIFEST_FILE), `${JSON.stringify(manifest)}\n`);
 		validateModelDataDirectory(structure, stagedData);
 		if (options.validateOnly) return;
-		const dataDir = join(providersDir, "data");
-		rmSync(dataDir, { recursive: true, force: true });
+		if (existsSync(dataDir)) {
+			backup = mkdtempSync(join(providersDir, ".model-data-backup-"));
+			rmSync(backup, { recursive: true });
+			renameSync(dataDir, backup);
+		}
 		renameSync(stagedData, dataDir);
+		if (backup) rmSync(backup, { recursive: true });
+	} catch (error) {
+		if (backup && !existsSync(dataDir)) {
+			try {
+				renameSync(backup, dataDir);
+			} catch (rollbackError) {
+				rollbackFailure = new AggregateError(
+					[error, rollbackError],
+					`Model data publication and rollback failed. Recover original data from ${backup}.`,
+				);
+				throw rollbackFailure;
+			}
+		}
+		throw error;
 	} finally {
-		rmSync(stagingRoot, { recursive: true, force: true });
+		try {
+			rmSync(stagingRoot, { recursive: true, force: true });
+		} catch (cleanupError) {
+			if (rollbackFailure) {
+				throw new AggregateError([...rollbackFailure.errors, cleanupError], rollbackFailure.message);
+			}
+			throw cleanupError;
+		}
 	}
 }
 

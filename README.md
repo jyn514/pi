@@ -104,11 +104,18 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [AGENTS.m
 ```bash
 npm install --ignore-scripts  # Install all dependencies without running lifecycle scripts
 npm run build         # Refresh model data, then build all packages
+npm run hydrate:pinned-model-data # Fetch and verify the catalog pinned in nix/model-catalog.json
 npm run build:offline # Rebuild using existing model data without network access
 npm run check         # Lint, format, and type check
 ./test.sh            # Run tests (skips LLM-dependent tests without API keys)
 ./pi-test.sh         # Run pi from sources (can be run from any directory)
 ```
+
+`hydrate:pinned-model-data` downloads the exact immutable typed catalog revision from pi.dev and verifies its SHA256 bytes before conversion.
+It uses the checkout's `nix/model-catalog.json`, not the latest catalog or an npm release, and does not update the pin.
+Hydration requires network access; subsequent `build:offline` compilation uses only the acquired data.
+Failed model-data publication restores the previous data.
+If publication and rollback both fail, the original data remains in the backup directory reported by the error for manual recovery.
 
 ### Using local packages outside the monorepo
 
