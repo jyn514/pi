@@ -93,9 +93,11 @@ export function readModelDataProviderIds(packageRoot: string): string[] {
 	return providerIds;
 }
 
-export function readModelDataStructure(packageRoot: string): ModelDataStructure {
+export function readModelDataStructure(
+	packageRoot: string,
+	dataDir = join(packageRoot, "src", "providers", "data"),
+): ModelDataStructure {
 	const providersDir = join(packageRoot, "src", "providers");
-	const dataDir = join(providersDir, "data");
 	const providerIds = readModelDataProviderIds(packageRoot);
 	const expectedShards = providerIds.map((providerId) => `${providerId}.models.ts`).sort();
 	const actualShards = readdirSync(providersDir)
