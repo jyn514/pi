@@ -297,6 +297,54 @@ describe("Coding Agent Tools", () => {
 			);
 		});
 
+		it("should suggest a unique high-confidence closest match", async () => {
+			const testFile = join(testDir, "edit-closest-match.txt");
+			writeFileSync(testFile, "alpha\nshared block\nomega\n\nbeta\nshared block\ngamma\n");
+
+			await expect(
+				editTool.execute("test-call-closest-match", {
+					path: testFile,
+					edits: [{ oldText: "alpha\nshared  block\nomega", newText: "changed" }],
+				}),
+			).rejects.toThrow("Closest match starts at line 1:\n  alpha\n- shared  block\n+ shared block\n  omega");
+		});
+
+		it("should omit ambiguous closest matches", async () => {
+			const testFile = join(testDir, "edit-ambiguous-match.txt");
+			writeFileSync(testFile, "alpha\nshared block\nomega\n\nalpha\nshared   block\nomega\n");
+
+			let error: unknown;
+			try {
+				await editTool.execute("test-call-ambiguous-match", {
+					path: testFile,
+					edits: [{ oldText: "alpha\nshared  block\nomega", newText: "changed" }],
+				});
+			} catch (caught) {
+				error = caught;
+			}
+
+			expect(error).toBeInstanceOf(Error);
+			expect((error as Error).message).not.toContain("Closest match");
+		});
+
+		it("should omit low-confidence closest matches", async () => {
+			const testFile = join(testDir, "edit-low-confidence-match.txt");
+			writeFileSync(testFile, "alpha\nunrelated content\nomega\n");
+
+			let error: unknown;
+			try {
+				await editTool.execute("test-call-low-confidence-match", {
+					path: testFile,
+					edits: [{ oldText: "alpha\nshared block\nomega", newText: "changed" }],
+				});
+			} catch (caught) {
+				error = caught;
+			}
+
+			expect(error).toBeInstanceOf(Error);
+			expect((error as Error).message).not.toContain("Closest match");
+		});
+
 		it("should reject whitespace-only oldText when no exact match exists", async () => {
 			const testFile = join(testDir, "edit-whitespace-only.txt");
 			writeFileSync(testFile, "alpha\nbeta\n");
