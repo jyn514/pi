@@ -260,11 +260,113 @@ export function stripBom(content: string): { bom: string; text: string } {
 
 const MAX_ERROR_PREVIEW_LENGTH = 200;
 const MAX_REPORTED_MATCH_LINES = 5;
+const MAX_CLOSEST_MATCH_CONTENT_LENGTH = 1_000_000;
+const MAX_CLOSEST_MATCH_OLD_TEXT_LENGTH = 4_000;
+const MAX_CLOSEST_MATCH_ANCHORS = 100;
+const MAX_CLOSEST_MATCH_DIFF_LINES = 12;
+const MAX_CLOSEST_MATCH_DIFF_LINE_LENGTH = 200;
 
-function formatOldTextPreview(oldText: string): string {
-	const preview =
-		oldText.length > MAX_ERROR_PREVIEW_LENGTH ? `${oldText.slice(0, MAX_ERROR_PREVIEW_LENGTH)}…` : oldText;
+function formatTextPreview(text: string): string {
+	const preview = text.length > MAX_ERROR_PREVIEW_LENGTH ? `${text.slice(0, MAX_ERROR_PREVIEW_LENGTH)}…` : text;
 	return JSON.stringify(preview);
+}
+
+function diceSimilarity(left: string, right: string): number {
+	if (left === right) return 1;
+	if (left.length < 2 || right.length < 2) return 0;
+
+	const leftBigrams = new Map<string, number>();
+	for (let i = 0; i < left.length - 1; i++) {
+		const bigram = left.slice(i, i + 2);
+		leftBigrams.set(bigram, (leftBigrams.get(bigram) ?? 0) + 1);
+	}
+
+	let intersection = 0;
+	for (let i = 0; i < right.length - 1; i++) {
+		const bigram = right.slice(i, i + 2);
+		const count = leftBigrams.get(bigram) ?? 0;
+		if (count === 0) continue;
+		intersection++;
+		leftBigrams.set(bigram, count - 1);
+	}
+
+	return (2 * intersection) / (left.length + right.length - 2);
+}
+
+interface ClosestMatch {
+	line: number;
+	text: string;
+}
+
+function findClosestMatch(content: string, oldText: string): ClosestMatch | undefined {
+	if (content.length > MAX_CLOSEST_MATCH_CONTENT_LENGTH || oldText.length > MAX_CLOSEST_MATCH_OLD_TEXT_LENGTH) {
+		return undefined;
+	}
+	const normalizedContent = normalizeForFuzzyMatch(content);
+	const normalizedOldText = normalizeForFuzzyMatch(oldText);
+	if (normalizedOldText.length === 0) return undefined;
+
+	const originalContentLines = content.split("\n");
+	const contentLines = normalizedContent.split("\n");
+	const oldTextLines = normalizedOldText.split("\n");
+	if (oldTextLines.length > contentLines.length) return undefined;
+
+	let anchorLineIndex = 0;
+	for (let i = 1; i < oldTextLines.length; i++) {
+		if (oldTextLines[i].length > oldTextLines[anchorLineIndex].length) anchorLineIndex = i;
+	}
+	const anchorText = oldTextLines[anchorLineIndex];
+	if (anchorText.length === 0) return undefined;
+
+	const rankedAnchors = contentLines
+		.map((line, index) => ({ index, score: diceSimilarity(anchorText, line) }))
+		.filter((candidate) => candidate.score >= 0.5)
+		.sort((a, b) => b.score - a.score);
+	const bestAnchorScore = rankedAnchors[0]?.score;
+	if (bestAnchorScore === undefined) return undefined;
+	const anchorCandidates = rankedAnchors.filter((candidate) => bestAnchorScore - candidate.score < 0.05);
+	if (anchorCandidates.length > MAX_CLOSEST_MATCH_ANCHORS) return undefined;
+
+	const candidates = new Map<number, { line: number; text: string; score: number }>();
+	for (const anchor of anchorCandidates) {
+		const startLineIndex = anchor.index - anchorLineIndex;
+		if (startLineIndex < 0 || startLineIndex + oldTextLines.length > contentLines.length) continue;
+		const normalizedText = contentLines.slice(startLineIndex, startLineIndex + oldTextLines.length).join("\n");
+		const text = originalContentLines.slice(startLineIndex, startLineIndex + oldTextLines.length).join("\n");
+		candidates.set(startLineIndex, {
+			line: startLineIndex + 1,
+			text,
+			score: diceSimilarity(normalizedOldText, normalizedText),
+		});
+	}
+
+	const ranked = [...candidates.values()].sort((a, b) => b.score - a.score);
+	const best = ranked[0];
+	if (!best || best.score < 0.8) return undefined;
+	const secondBest = ranked[1];
+	if (secondBest && best.score - secondBest.score < 0.05) return undefined;
+	return { line: best.line, text: best.text };
+}
+
+function formatClosestMatchDiff(expected: string, found: string): string {
+	const lines: string[] = [];
+	for (const part of Diff.diffLines(expected, found)) {
+		const prefix = part.added ? "+" : part.removed ? "-" : " ";
+		const partLines = part.value.split("\n");
+		if (partLines[partLines.length - 1] === "") partLines.pop();
+		for (const line of partLines) {
+			const displayLine =
+				line.length > MAX_CLOSEST_MATCH_DIFF_LINE_LENGTH
+					? `${line.slice(0, MAX_CLOSEST_MATCH_DIFF_LINE_LENGTH)}…`
+					: line;
+			lines.push(`${prefix} ${displayLine}`);
+			if (lines.length === MAX_CLOSEST_MATCH_DIFF_LINES) {
+				lines.push("  …");
+				return lines.join("\n");
+			}
+		}
+	}
+	return lines.join("\n");
 }
 
 interface OccurrenceSummary {
@@ -296,10 +398,21 @@ function summarizeOccurrences(content: string, oldText: string): OccurrenceSumma
 	}
 }
 
-function getNotFoundError(path: string, editIndex: number, totalEdits: number, oldText: string): Error {
+function getNotFoundError(
+	path: string,
+	editIndex: number,
+	totalEdits: number,
+	oldText: string,
+	closestMatch: ClosestMatch | undefined,
+): Error {
 	const target = totalEdits === 1 ? "oldText" : `edits[${editIndex}].oldText`;
+	if (closestMatch) {
+		return new Error(
+			`Could not find ${target} in ${path}. Closest match starts at line ${closestMatch.line}:\n${formatClosestMatchDiff(oldText, closestMatch.text)}`,
+		);
+	}
 	return new Error(
-		`Could not find ${target} in ${path}. Expected ${formatOldTextPreview(oldText)}. No exact or normalized match was found; check internal whitespace and newlines, or read the file again if it may have changed.`,
+		`Could not find ${target} in ${path}. Expected ${formatTextPreview(oldText)}. No exact or normalized match was found; check internal whitespace and newlines, or read the file again if it may have changed.`,
 	);
 }
 
@@ -362,7 +475,13 @@ export function applyEditsToNormalizedContent(
 		const edit = normalizedEdits[i];
 		const matchResult = fuzzyFindText(replacementBaseContent, edit.oldText);
 		if (!matchResult.found) {
-			throw getNotFoundError(path, i, normalizedEdits.length, edit.oldText);
+			throw getNotFoundError(
+				path,
+				i,
+				normalizedEdits.length,
+				edit.oldText,
+				findClosestMatch(normalizedContent, edit.oldText),
+			);
 		}
 
 		const occurrenceSummary = summarizeOccurrences(replacementBaseContent, edit.oldText);
