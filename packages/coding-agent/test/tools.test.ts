@@ -309,6 +309,132 @@ describe("Coding Agent Tools", () => {
 			).rejects.toThrow("Closest match starts at line 1:\n  alpha\n- shared  block\n+ shared block\n  omega");
 		});
 
+		it("should center a truncated closest-match diff on the changed lines", async () => {
+			const testFile = join(testDir, "edit-large-closest-match.txt");
+			const actualLines = Array.from({ length: 20 }, (_, index) => `setting ${index + 1} = true;`);
+			const expectedLines = [...actualLines];
+			expectedLines[14] = "setting 15 = false;";
+			writeFileSync(testFile, `${actualLines.join("\n")}\n`);
+
+			let error: unknown;
+			try {
+				await editTool.execute("test-call-large-closest-match", {
+					path: testFile,
+					edits: [{ oldText: expectedLines.join("\n"), newText: "changed" }],
+				});
+			} catch (caught) {
+				error = caught;
+			}
+
+			expect(error).toBeInstanceOf(Error);
+			const message = (error as Error).message;
+			expect(message).toContain("Closest match starts at line 1:\n  …");
+			expect(message).toContain("- setting 15 = false;\n+ setting 15 = true;");
+			expect(message).not.toContain("setting 1 = true;");
+			expect(message).toMatch(/ {2}…$/);
+			expect(message.split("\n").length).toBeLessThanOrEqual(13);
+		});
+
+		it("should include multiple distant mismatches within the diff budget", async () => {
+			const testFile = join(testDir, "edit-distant-closest-matches.txt");
+			const actualLines = Array.from({ length: 20 }, (_, index) => `setting ${index + 1} = true;`);
+			const expectedLines = [...actualLines];
+			expectedLines[3] = "setting 4 = false;";
+			expectedLines[16] = "setting 17 = false;";
+			writeFileSync(testFile, `${actualLines.join("\n")}\n`);
+
+			let error: unknown;
+			try {
+				await editTool.execute("test-call-distant-closest-matches", {
+					path: testFile,
+					edits: [{ oldText: expectedLines.join("\n"), newText: "changed" }],
+				});
+			} catch (caught) {
+				error = caught;
+			}
+
+			expect(error).toBeInstanceOf(Error);
+			const message = (error as Error).message;
+			expect(message).toContain("- setting 4 = false;\n+ setting 4 = true;");
+			expect(message).toContain("- setting 17 = false;\n+ setting 17 = true;");
+			expect(message).toContain("  …");
+			expect(message.split("\n").length).toBeLessThanOrEqual(13);
+		});
+
+		it("should mark only the omitted side for edge mismatches", async () => {
+			for (const testCase of [
+				{ name: "first", changedIndex: 0, expectLeading: false, expectTrailing: true },
+				{ name: "last", changedIndex: 7, expectLeading: true, expectTrailing: false },
+			]) {
+				const testFile = join(testDir, `edit-${testCase.name}-line-closest-match.txt`);
+				const actualLines = Array.from({ length: 8 }, (_, index) => `setting ${index + 1} = true;`);
+				const expectedLines = [...actualLines];
+				expectedLines[testCase.changedIndex] = `setting ${testCase.changedIndex + 1} = false;`;
+				writeFileSync(testFile, `${actualLines.join("\n")}\n`);
+
+				let error: unknown;
+				try {
+					await editTool.execute(`test-call-${testCase.name}-line-closest-match`, {
+						path: testFile,
+						edits: [{ oldText: expectedLines.join("\n"), newText: "changed" }],
+					});
+				} catch (caught) {
+					error = caught;
+				}
+
+				expect(error).toBeInstanceOf(Error);
+				const diffLines = (error as Error).message.split("\n").slice(1);
+				expect(diffLines[0] === "  …").toBe(testCase.expectLeading);
+				expect(diffLines[diffLines.length - 1] === "  …").toBe(testCase.expectTrailing);
+			}
+		});
+
+		it("should report closest-match line numbers correctly for CRLF files", async () => {
+			const testFile = join(testDir, "edit-crlf-closest-match.txt");
+			writeFileSync(testFile, "header\r\nalpha\r\nshared block\r\nomega\r\nfooter\r\n");
+
+			await expect(
+				editTool.execute("test-call-crlf-closest-match", {
+					path: testFile,
+					edits: [{ oldText: "alpha\nshared  block\nomega", newText: "changed" }],
+				}),
+			).rejects.toThrow("Closest match starts at line 2:\n  alpha\n- shared  block\n+ shared block\n  omega");
+		});
+
+		it("should suggest a unique same-line typo", async () => {
+			const testFile = join(testDir, "edit-same-line-typo.txt");
+			writeFileSync(testFile, "const host = 'localhost';\nconst timeout = 30_000;\nstart();\n");
+
+			await expect(
+				editTool.execute("test-call-same-line-typo", {
+					path: testFile,
+					edits: [{ oldText: "const timeout = 3_000;", newText: "const timeout = 60_000;" }],
+				}),
+			).rejects.toThrow("Closest match starts at line 2:\n- const timeout = 3_000;\n+ const timeout = 30_000;");
+		});
+
+		it("should bound long changed lines without dropping diff markers", async () => {
+			const testFile = join(testDir, "edit-long-line-closest-match.txt");
+			const suffix = "x".repeat(250);
+			writeFileSync(testFile, `actual ${suffix}\n`);
+
+			let error: unknown;
+			try {
+				await editTool.execute("test-call-long-line-closest-match", {
+					path: testFile,
+					edits: [{ oldText: `expected ${suffix}`, newText: "changed" }],
+				});
+			} catch (caught) {
+				error = caught;
+			}
+
+			expect(error).toBeInstanceOf(Error);
+			const diffLines = (error as Error).message.split("\n").slice(1);
+			expect(diffLines.some((line) => line.startsWith("- expected "))).toBe(true);
+			expect(diffLines.some((line) => line.startsWith("+ actual "))).toBe(true);
+			expect(diffLines.every((line) => line.length <= 203)).toBe(true);
+		});
+
 		it("should omit ambiguous closest matches", async () => {
 			const testFile = join(testDir, "edit-ambiguous-match.txt");
 			writeFileSync(testFile, "alpha\nshared block\nomega\n\nalpha\nshared   block\nomega\n");
