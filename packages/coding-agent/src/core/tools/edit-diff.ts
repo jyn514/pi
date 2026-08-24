@@ -348,25 +348,73 @@ function findClosestMatch(content: string, oldText: string): ClosestMatch | unde
 	return { line: best.line, text: best.text };
 }
 
+interface ClosestMatchDiffLine {
+	prefix: " " | "+" | "-";
+	text: string;
+}
+
+function selectClosestMatchDiffLines(lines: ClosestMatchDiffLine[], contextLines: number): number[] {
+	const selected = new Set<number>();
+	for (let i = 0; i < lines.length; i++) {
+		if (lines[i].prefix === " ") continue;
+		const start = Math.max(0, i - contextLines);
+		const end = Math.min(lines.length, i + contextLines + 1);
+		for (let j = start; j < end; j++) selected.add(j);
+	}
+	return [...selected].sort((a, b) => a - b);
+}
+
+function countRenderedClosestMatchDiffLines(indices: number[]): number {
+	let count = indices.length;
+	for (let i = 1; i < indices.length; i++) {
+		if (indices[i] > indices[i - 1] + 1) count++;
+	}
+	return count;
+}
+
 function formatClosestMatchDiff(expected: string, found: string): string {
-	const lines: string[] = [];
+	const diffLines: ClosestMatchDiffLine[] = [];
 	for (const part of Diff.diffLines(expected, found)) {
 		const prefix = part.added ? "+" : part.removed ? "-" : " ";
 		const partLines = part.value.split("\n");
 		if (partLines[partLines.length - 1] === "") partLines.pop();
-		for (const line of partLines) {
-			const displayLine =
-				line.length > MAX_CLOSEST_MATCH_DIFF_LINE_LENGTH
-					? `${line.slice(0, MAX_CLOSEST_MATCH_DIFF_LINE_LENGTH)}…`
-					: line;
-			lines.push(`${prefix} ${displayLine}`);
-			if (lines.length === MAX_CLOSEST_MATCH_DIFF_LINES) {
-				lines.push("  …");
-				return lines.join("\n");
-			}
-		}
+		for (const text of partLines) diffLines.push({ prefix, text });
 	}
-	return lines.join("\n");
+
+	let selectedIndices: number[] = [];
+	for (let contextLines = 3; contextLines >= 0; contextLines--) {
+		selectedIndices = selectClosestMatchDiffLines(diffLines, contextLines);
+		if (countRenderedClosestMatchDiffLines(selectedIndices) <= MAX_CLOSEST_MATCH_DIFF_LINES) break;
+	}
+	if (countRenderedClosestMatchDiffLines(selectedIndices) > MAX_CLOSEST_MATCH_DIFF_LINES) {
+		selectedIndices = selectedIndices.slice(0, MAX_CLOSEST_MATCH_DIFF_LINES - 1);
+	}
+
+	const output: string[] = [];
+	let lastRenderedIndex: number | undefined;
+	let renderedSelectionCount = 0;
+	for (const index of selectedIndices) {
+		const needsGap = lastRenderedIndex === undefined ? index > 0 : index > lastRenderedIndex + 1;
+		const needsTrailingMarker = index < diffLines.length - 1 || renderedSelectionCount < selectedIndices.length - 1;
+		const requiredLines = (needsGap ? 1 : 0) + 1 + (needsTrailingMarker ? 1 : 0);
+		if (output.length + requiredLines > MAX_CLOSEST_MATCH_DIFF_LINES) break;
+		if (needsGap) output.push("  …");
+		const line = diffLines[index];
+		const displayLine =
+			line.text.length > MAX_CLOSEST_MATCH_DIFF_LINE_LENGTH
+				? `${line.text.slice(0, MAX_CLOSEST_MATCH_DIFF_LINE_LENGTH)}…`
+				: line.text;
+		output.push(`${line.prefix} ${displayLine}`);
+		lastRenderedIndex = index;
+		renderedSelectionCount++;
+	}
+	if (
+		lastRenderedIndex !== undefined &&
+		(lastRenderedIndex < diffLines.length - 1 || renderedSelectionCount < selectedIndices.length)
+	) {
+		output.push("  …");
+	}
+	return output.join("\n");
 }
 
 interface OccurrenceSummary {
