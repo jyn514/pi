@@ -23,6 +23,7 @@
 		"check:ts-imports": "node scripts/check-ts-relative-imports.mjs",
 		"generate:models": "npm --prefix packages/ai run generate-models && npm --prefix packages/ai run generate-image-models",
 		"hydrate:model-data": "npm --prefix packages/ai run hydrate-model-data",
+		"hydrate:pinned-model-data": "npm --prefix packages/ai run hydrate-pinned-model-data",
 		"check:model-data": "npm --prefix packages/ai run check:model-data",
 		"generate:model-catalog": "npm --prefix packages/ai run generate-model-catalog",
 		"diff:model-catalog": "node scripts/diff-model-catalog.mjs",
@@ -51,6 +52,7 @@
 	"devDependencies": {
 		"@anthropic-ai/sandbox-runtime": "0.0.26",
 		"@biomejs/biome": "2.3.5",
+		"@earendil-works/pi-ai-model-data": "npm:@earendil-works/pi-ai@0.84.2",
 		"@types/node": "22.19.19",
 		"@typescript/native-preview": "7.0.0-dev.20260120.1",
 		"esbuild": "0.28.1",
