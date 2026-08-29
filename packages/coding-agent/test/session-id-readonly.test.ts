@@ -161,6 +161,45 @@ describe("--session-id", () => {
 			throw new Error(`exit:${code}`);
 		});
 
+	it("does not warn when quiet startup creates a session for a missing --session-id", async () => {
+		const result = await runCli(
+			(dirs) => [
+				"--session-dir",
+				dirs.sessionDir,
+				"--session-id",
+				"quiet-missing-session-id",
+				"--model",
+				"missing-model",
+				"-p",
+				"hi",
+			],
+			(dirs) => {
+				writeFileSync(join(dirs.agentDir, "settings.json"), JSON.stringify({ quietStartup: true }));
+			},
+		);
+
+		expect(result.code).toBe(1);
+		expect(result.stderr).not.toContain("No project session found with id 'quiet-missing-session-id'");
+	});
+
+	it("does not warn when --session-id opens an existing session", async () => {
+		const result = await runCli(
+			(dirs) => [
+				"--session-dir",
+				dirs.sessionDir,
+				"--session-id",
+				"existing-session-id",
+				"--model",
+				"missing-model",
+				"-p",
+				"hi",
+			],
+			(dirs) => {
+				mkdirSync(dirs.sessionDir, { recursive: true });
+				writeSession(dirs.sessionDir, dirs.projectDir, "existing-session-id");
+			},
+		);
+
 		await expect(
 			createSessionManager(
 				args({ fork: "source-id", sessionId: "existing-id" }),
