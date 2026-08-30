@@ -401,6 +401,7 @@ export class AgentSession {
 
 	// Compaction state
 	private _compactionAbortController: AbortController | undefined = undefined;
+	private _manualCompactionStarting = false;
 	private _autoCompactionAbortController: AbortController | undefined = undefined;
 	private _overflowRecoveryAttempted = false;
 
@@ -2762,8 +2763,22 @@ export class AgentSession {
 	 * @param customInstructions Optional instructions for the compaction summary
 	 */
 	async compact(customInstructions?: string): Promise<CompactionResult> {
-		await this.abort();
-		this._compactionAbortController = new AbortController();
+		if (this._compactionAbortController !== undefined || this._manualCompactionStarting) {
+			throw new Error("Compaction already in progress");
+		}
+
+		this._manualCompactionStarting = true;
+		let abortController: AbortController;
+		try {
+			await this.abort();
+			abortController = new AbortController();
+			this._compactionAbortController = abortController;
+		} catch (error) {
+			this._manualCompactionStarting = false;
+			throw error;
+		}
+		this._manualCompactionStarting = false;
+
 		this._emit({ type: "compaction_start", reason: "manual" });
 		let fromExtension = false;
 		let cancelledByExtension = false;
@@ -2797,7 +2812,7 @@ export class AgentSession {
 					customInstructions,
 					reason: "manual",
 					willRetry: false,
-					signal: this._compactionAbortController.signal,
+					signal: abortController.signal,
 				})) as SessionBeforeCompactResult | undefined;
 
 				if (result?.cancel) {
@@ -2830,7 +2845,7 @@ export class AgentSession {
 					preparation,
 					model,
 					customInstructions,
-					this._compactionAbortController.signal,
+					abortController.signal,
 					"manual",
 				);
 				summary = result.summary;
@@ -2840,7 +2855,7 @@ export class AgentSession {
 				details = result.details;
 			}
 
-			if (this._compactionAbortController.signal.aborted) {
+			if (abortController.signal.aborted) {
 				throw new Error("Compaction cancelled");
 			}
 
@@ -2873,7 +2888,9 @@ export class AgentSession {
 				details,
 			};
 			// compaction_end listeners may submit queued prompts, so expose idle state before notifying them.
-			this._clearManualCompactionState();
+			if (this._compactionAbortController === abortController) {
+				this._clearManualCompactionState();
+			}
 			this._emit({
 				type: "compaction_end",
 				reason: "manual",
@@ -2884,9 +2901,11 @@ export class AgentSession {
 			return compactionResult;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			const aborted = this._compactionAbortController.signal.aborted || cancelledByExtension;
+			const aborted = abortController.signal.aborted || cancelledByExtension;
 			const errorMessage = aborted ? undefined : `Compaction failed: ${message}`;
-			this._clearManualCompactionState();
+			if (this._compactionAbortController === abortController) {
+				this._clearManualCompactionState();
+			}
 			this._emit({
 				type: "compaction_end",
 				reason: "manual",
@@ -2904,7 +2923,9 @@ export class AgentSession {
 			});
 			throw error;
 		} finally {
-			this._clearManualCompactionState();
+			if (this._compactionAbortController === abortController) {
+				this._clearManualCompactionState();
+			}
 		}
 	}
 

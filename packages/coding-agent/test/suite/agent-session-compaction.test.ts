@@ -271,6 +271,94 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.session.getLastAssistantText()).toBe("queued response");
 	});
 
+	it("preserves a manual compaction listener error after clearing its owned controller", async () => {
+		const failedEvents: unknown[] = [];
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", (event) => ({
+						compaction: {
+							summary: "saved before listener failure",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+						},
+					}));
+					pi.on("session_compact_failed", (event) => {
+						failedEvents.push(event);
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		const listenerError = new Error("compaction listener failed");
+		harness.session.subscribe((event) => {
+			if (event.type === "compaction_end" && event.result) {
+				expect(harness.session.isCompacting).toBe(false);
+				throw listenerError;
+			}
+		});
+
+		await expect(harness.session.compact()).rejects.toBe(listenerError);
+
+		expect(harness.session.isIdle).toBe(true);
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(1);
+		expect(failedEvents).toEqual([
+			expect.objectContaining({
+				reason: "manual",
+				aborted: false,
+				errorMessage: "Compaction failed: compaction listener failed",
+			}),
+		]);
+	});
+
+	it("rejects overlapping manual compactions without disrupting the active compaction", async () => {
+		let markCompactionStarted = () => {};
+		const compactionStarted = new Promise<void>((resolve) => {
+			markCompactionStarted = resolve;
+		});
+		let releaseCompaction = () => {};
+		const compactionReleased = new Promise<void>((resolve) => {
+			releaseCompaction = resolve;
+		});
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => {
+						markCompactionStarted();
+						await compactionReleased;
+						return {
+							compaction: {
+								summary: "first manual compaction",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: event.preparation.tokensBefore,
+								details: {},
+							},
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+
+		const firstCompaction = harness.session.compact();
+		const overlappingCompaction = expect(harness.session.compact()).rejects.toThrow("Compaction already in progress");
+		await compactionStarted;
+
+		await overlappingCompaction;
+		expect(harness.session.isCompacting).toBe(true);
+
+		releaseCompaction();
+		await expect(firstCompaction).resolves.toMatchObject({ summary: "first manual compaction" });
+
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(1);
+		expect(harness.eventsOfType("compaction_start")).toHaveLength(1);
+		expect(harness.eventsOfType("compaction_end")).toHaveLength(1);
+		expect(harness.session.isCompacting).toBe(false);
+	});
+
 	it("throws when compacting without a model", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
