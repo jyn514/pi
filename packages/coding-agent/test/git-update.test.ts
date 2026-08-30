@@ -65,6 +65,11 @@ interface PackageManagerPathInternals {
 	getGitInstallPath(source: GitSourceForTest, scope: "temporary"): string;
 }
 
+interface PackageManagerGitInternals {
+	installGit(source: GitSourceForTest, scope: "user"): Promise<void>;
+	runCommand(command: string, args: string[], options?: { cwd?: string }): Promise<void>;
+}
+
 describe("DefaultPackageManager git update", () => {
 	let tempDir: string;
 	let remoteDir: string; // Simulates the "remote" repository
@@ -203,6 +208,68 @@ describe("DefaultPackageManager git update", () => {
 	});
 
 	describe("pinned sources", () => {
+		it("should install a non-default branch when checkout guessing is disabled", async () => {
+			mkdirSync(remoteDir, { recursive: true });
+			initGitRepo(remoteDir);
+			createCommit(remoteDir, "extension.ts", "// main", "Main commit");
+			git(["switch", "-c", "pre-compile"], remoteDir);
+			const branchCommit = createCommit(remoteDir, "extension.ts", "// pre-compile", "Branch commit");
+			git(["switch", "main"], remoteDir);
+
+			const managerWithInternals = packageManager as unknown as PackageManagerGitInternals;
+			managerWithInternals.runCommand = async (command, args, options) => {
+				const configuredArgs = command === "git" ? ["-c", "checkout.guess=false", ...args] : args;
+				const result = spawnSync(command, configuredArgs, {
+					cwd: options?.cwd,
+					encoding: "utf-8",
+				});
+				if (result.status !== 0) {
+					throw new Error(`Command failed: ${command} ${configuredArgs.join(" ")}\n${result.stderr}`);
+				}
+			};
+
+			await managerWithInternals.installGit(
+				{
+					type: "git",
+					repo: remoteDir,
+					host: "github.com",
+					path: "test/extension",
+					pinned: true,
+					ref: "pre-compile",
+				},
+				"user",
+			);
+
+			expect(getCurrentCommit(installedDir)).toBe(branchCommit);
+			expect(getFileContent(installedDir, "extension.ts")).toBe("// pre-compile");
+		});
+
+		it("should not move pinned git sources past their configured ref", async () => {
+			// Create remote repo first to get the initial commit
+			mkdirSync(remoteDir, { recursive: true });
+			initGitRepo(remoteDir);
+			const initialCommit = createCommit(remoteDir, "extension.ts", "// v1", "Initial commit");
+
+			// Install with pinned ref from the start - full clone to ensure commit is available
+			mkdirSync(join(agentDir, "git", "github.com", "test"), { recursive: true });
+			git(["clone", remoteDir, installedDir], tempDir);
+			git(["checkout", initialCommit], installedDir);
+			git(["config", "--local", "user.email", "test@test.com"], installedDir);
+			git(["config", "--local", "user.name", "Test"], installedDir);
+
+			// Add to global packages with pinned ref
+			settingsManager.setPackages([`${gitSource}@${initialCommit}`]);
+
+			// Add new commit to remote
+			createCommit(remoteDir, "extension.ts", "// v2", "Second commit");
+
+			await packageManager.update();
+
+			// Should still be on initial commit
+			expect(getCurrentCommit(installedDir)).toBe(initialCommit);
+			expect(getFileContent(installedDir, "extension.ts")).toBe("// v1");
+		});
+
 		it("should checkout the configured pinned git ref during full and targeted updates", async () => {
 			mkdirSync(remoteDir, { recursive: true });
 			initGitRepo(remoteDir);
