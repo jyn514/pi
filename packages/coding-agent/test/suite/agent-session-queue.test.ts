@@ -2,7 +2,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHarness, getAssistantTexts, getMessageText, getUserTexts, type Harness } from "./harness.ts";
 
 async function createWaitingHarness(
@@ -66,6 +66,34 @@ describe("AgentSession queue characterization", () => {
 		}
 	});
 
+	it("restores the agent turn hook when disposed", async () => {
+		const harness = await createHarness();
+		const installedHook = harness.session.agent.shouldStopAfterTurn;
+		expect(installedHook).toBeTypeOf("function");
+
+		harness.cleanup();
+
+		expect(harness.session.agent.shouldStopAfterTurn).toBeUndefined();
+	});
+
+	it("exposes pause and resume through the extension API", async () => {
+		let extensionApi: ExtensionAPI | undefined;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					extensionApi = pi;
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		extensionApi?.requestPause();
+		expect(harness.session.pauseState).toBe("paused");
+
+		extensionApi?.resume();
+		expect(harness.session.pauseState).toBe("unpaused");
+	});
+
 	it("dispatches extension commands immediately when prompted while idle", async () => {
 		const commandRuns: string[] = [];
 		const harness = await createHarness({
@@ -87,6 +115,305 @@ describe("AgentSession queue characterization", () => {
 		expect(commandRuns).toEqual(["hello world"]);
 		expect(harness.getPendingResponseCount()).toBe(0);
 		expect(harness.session.messages).toEqual([]);
+	});
+
+	it("pauses after a complete tool turn and resumes its required continuation", async () => {
+		const waiting = await createWaitingHarness();
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		const pauseStates: string[] = [];
+
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("continued after pause"),
+		]);
+		harness.session.subscribe((event) => {
+			if (event.type === "pause_state_changed") pauseStates.push(event.state);
+		});
+
+		await waitForToolStart;
+		harness.session.requestPause();
+		expect(harness.session.pauseState).toBe("pausing");
+		releaseToolExecution();
+
+		await vi.waitFor(() => expect(harness.session.pauseState).toBe("paused"));
+		expect(harness.getPendingResponseCount()).toBe(1);
+		expect(getAssistantTexts(harness)).toEqual([""]);
+
+		harness.session.resume();
+		await promptPromise;
+
+		expect(getAssistantTexts(harness)).toEqual(["", "continued after pause"]);
+		expect(pauseStates).toEqual(["pausing", "paused", "unpaused"]);
+	});
+
+	it("does not let a stale resume bypass a new pause request", async () => {
+		const waiting = await createWaitingHarness();
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("continued"),
+		]);
+
+		await waitForToolStart;
+		harness.session.requestPause();
+		releaseToolExecution();
+		await vi.waitFor(() => expect(harness.session.pauseState).toBe("paused"));
+
+		harness.session.resume();
+		harness.session.requestPause();
+		await vi.waitFor(() => expect(harness.session.pauseState).toBe("paused"));
+		expect(harness.faux.state.callCount).toBe(1);
+
+		harness.session.resume();
+		await promptPromise;
+		expect(harness.faux.state.callCount).toBe(2);
+	});
+
+	it("does not continue after a terminating tool result when resumed", async () => {
+		let releaseTool: (() => void) | undefined;
+		const toolRelease = new Promise<void>((resolve) => {
+			releaseTool = resolve;
+		});
+		const terminatingTool: AgentTool = {
+			name: "terminate",
+			label: "Terminate",
+			description: "Terminate after release",
+			parameters: Type.Object({}),
+			execute: async () => {
+				await toolRelease;
+				return { content: [{ type: "text", text: "done" }], details: {}, terminate: true };
+			},
+		};
+		const harness = await createHarness({ tools: [terminatingTool] });
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("terminate", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("must not run"),
+		]);
+		const toolStarted = new Promise<void>((resolve) => {
+			const unsubscribe = harness.session.subscribe((event) => {
+				if (event.type === "tool_execution_start" && event.toolName === "terminate") {
+					unsubscribe();
+					resolve();
+				}
+			});
+		});
+
+		const promptPromise = harness.session.prompt("start");
+		await toolStarted;
+		harness.session.requestPause();
+		releaseTool?.();
+		await vi.waitFor(() => expect(harness.session.pauseState).toBe("paused"));
+
+		harness.session.resume();
+		await promptPromise;
+
+		expect(harness.faux.state.callCount).toBe(1);
+		expect(harness.getPendingResponseCount()).toBe(1);
+	});
+
+	it("cancels a requested pause when resumed before the turn boundary", async () => {
+		const waiting = await createWaitingHarness();
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		const pauseStates: string[] = [];
+
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("continued without parking"),
+		]);
+		harness.session.subscribe((event) => {
+			if (event.type === "pause_state_changed") pauseStates.push(event.state);
+		});
+
+		await waitForToolStart;
+		harness.session.requestPause();
+		harness.session.resume();
+		releaseToolExecution();
+		await promptPromise;
+
+		expect(getAssistantTexts(harness)).toEqual(["", "continued without parking"]);
+		expect(pauseStates).toEqual(["pausing", "unpaused"]);
+	});
+
+	it("aborts a parked session without starting its continuation", async () => {
+		const waiting = await createWaitingHarness();
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("must not run"),
+		]);
+
+		await waitForToolStart;
+		harness.session.requestPause();
+		releaseToolExecution();
+		await vi.waitFor(() => expect(harness.session.pauseState).toBe("paused"));
+
+		await harness.session.abort();
+		await promptPromise;
+
+		expect(harness.session.pauseState).toBe("unpaused");
+		expect(harness.session.isIdle).toBe(true);
+		expect(harness.getPendingResponseCount()).toBe(1);
+		expect(getAssistantTexts(harness)).toEqual([""]);
+	});
+
+	it("rejects new work while paused and accepts it after resume", async () => {
+		const commandRuns: string[] = [];
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.registerCommand("blocked", {
+						description: "Must not run while paused",
+						handler: async () => {
+							commandRuns.push("ran");
+						},
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.session.requestPause();
+
+		await expect(harness.session.prompt("blocked")).rejects.toThrow(
+			"Session is paused; resume it before submitting work.",
+		);
+		await expect(harness.session.steer("blocked")).rejects.toThrow(
+			"Session is paused; resume it before submitting work.",
+		);
+		await expect(harness.session.followUp("blocked")).rejects.toThrow(
+			"Session is paused; resume it before submitting work.",
+		);
+		await expect(
+			harness.session.sendCustomMessage(
+				{ customType: "blocked", content: "blocked", display: false, details: {} },
+				{ triggerTurn: true },
+			),
+		).rejects.toThrow("Session is paused; resume it before submitting work.");
+		await expect(harness.session.prompt("/blocked")).rejects.toThrow(
+			"Session is paused; resume it before submitting work.",
+		);
+		expect(commandRuns).toEqual([]);
+
+		const bashResult = await harness.session.executeBash("printf allowed");
+		expect(bashResult.output).toBe("allowed");
+
+		harness.session.resume();
+		harness.setResponses([fauxAssistantMessage("accepted")]);
+		await harness.session.prompt("allowed");
+		expect(getAssistantTexts(harness)).toEqual(["accepted"]);
+	});
+
+	it("does not admit a provider run when paused during asynchronous prompt preflight", async () => {
+		let releaseInput: (() => void) | undefined;
+		let markInputStarted: (() => void) | undefined;
+		const inputStarted = new Promise<void>((resolve) => {
+			markInputStarted = resolve;
+		});
+		const inputRelease = new Promise<void>((resolve) => {
+			releaseInput = resolve;
+		});
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", async () => {
+						markInputStarted?.();
+						await inputRelease;
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		await harness.session.sendCustomMessage(
+			{ customType: "retained", content: "queued context", display: false, details: {} },
+			{ deliverAs: "nextTurn" },
+		);
+
+		const promptPromise = harness.session.prompt("blocked during preflight");
+		await inputStarted;
+		harness.session.requestPause();
+		expect(harness.session.pauseState).toBe("paused");
+		releaseInput?.();
+
+		await vi.waitFor(() => expect(harness.session.pauseState).toBe("paused"));
+		expect(harness.faux.state.callCount).toBe(0);
+
+		harness.setResponses([
+			(context) =>
+				fauxAssistantMessage(
+					context.messages.some(
+						(message) =>
+							message.role === "user" &&
+							typeof message.content !== "string" &&
+							message.content.some((part) => part.type === "text" && part.text === "queued context"),
+					)
+						? "retained context"
+						: "lost context",
+				),
+		]);
+		harness.session.resume();
+		await promptPromise;
+		expect(getAssistantTexts(harness)).toEqual(["retained context"]);
+	});
+
+	it("aborts a provider admission parked after asynchronous prompt preflight", async () => {
+		let releaseInput: (() => void) | undefined;
+		let markInputStarted: (() => void) | undefined;
+		const inputStarted = new Promise<void>((resolve) => {
+			markInputStarted = resolve;
+		});
+		const inputRelease = new Promise<void>((resolve) => {
+			releaseInput = resolve;
+		});
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", async () => {
+						markInputStarted?.();
+						await inputRelease;
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		await harness.session.sendCustomMessage(
+			{ customType: "retained-after-abort", content: "retained after abort", display: false, details: {} },
+			{ deliverAs: "nextTurn" },
+		);
+		harness.setResponses([fauxAssistantMessage("must not run")]);
+
+		const promptPromise = harness.session.prompt("abort during preflight");
+		await inputStarted;
+		harness.session.requestPause();
+		releaseInput?.();
+		await vi.waitFor(() => expect(harness.session.pauseState).toBe("paused"));
+
+		await harness.session.abort();
+		await promptPromise;
+
+		expect(harness.faux.state.callCount).toBe(0);
+		expect(harness.getPendingResponseCount()).toBe(1);
+		expect(harness.session.isIdle).toBe(true);
+
+		harness.setResponses([
+			(context) =>
+				fauxAssistantMessage(
+					context.messages.some(
+						(message) =>
+							message.role === "user" &&
+							typeof message.content !== "string" &&
+							message.content.some((part) => part.type === "text" && part.text === "retained after abort"),
+					)
+						? "retained"
+						: "lost",
+				),
+		]);
+		await harness.session.prompt("after abort");
+		expect(getAssistantTexts(harness)).toEqual(["retained"]);
 	});
 
 	it("delivers extension-origin steering messages before the next LLM call", async () => {

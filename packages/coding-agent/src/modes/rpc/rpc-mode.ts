@@ -430,6 +430,16 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				return success(id, "abort");
 			}
 
+			case "pause": {
+				session.requestPause();
+				return success(id, "pause");
+			}
+
+			case "resume": {
+				session.resume();
+				return success(id, "resume");
+			}
+
 			case "clear_queue": {
 				return success(id, "clear_queue", session.clearQueue());
 			}
@@ -453,6 +463,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 					thinkingLevel: session.thinkingLevel,
 					isStreaming: session.isStreaming,
 					isCompacting: session.isCompacting,
+					pauseState: session.pauseState,
 					steeringMode: session.steeringMode,
 					followUpMode: session.followUpMode,
 					sessionFile: session.sessionFile,

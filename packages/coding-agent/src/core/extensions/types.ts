@@ -1401,6 +1401,12 @@ export interface ExtensionAPI {
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
 	appendEntry<T = unknown>(customType: string, data?: T): void;
 
+	/** Request a cooperative pause after the current complete agent turn. */
+	requestPause(): void;
+
+	/** Resume a cooperatively paused agent session. */
+	resume(): void;
+
 	// =========================================================================
 	// Session Metadata
 	// =========================================================================
@@ -1712,6 +1718,8 @@ export interface ExtensionActions {
 	sendMessage: SendMessageHandler;
 	sendUserMessage: SendUserMessageHandler;
 	appendEntry: AppendEntryHandler;
+	requestPause: () => void;
+	resume: () => void;
 	setSessionName: SetSessionNameHandler;
 	getSessionName: GetSessionNameHandler;
 	setLabel: SetLabelHandler;

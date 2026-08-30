@@ -286,6 +286,65 @@ describe("RPC prompt response semantics", () => {
 		}
 	});
 
+	it("pauses cooperatively and reports pause state over RPC", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({ withAuth: true, responseDelayMs: 100 });
+
+		try {
+			lineHandler(JSON.stringify({ id: "pause-start", type: "prompt", message: "Start" }));
+			await vi.waitFor(() => {
+				expect(getPromptResponses(rpcIo.outputLines, "pause-start")).toHaveLength(1);
+			});
+
+			lineHandler(JSON.stringify({ id: "pause", type: "pause" }));
+			await vi.waitFor(() => {
+				expect(parseOutputLines(rpcIo.outputLines)).toContainEqual({
+					id: "pause",
+					type: "response",
+					command: "pause",
+					success: true,
+				});
+			});
+			expect(parseOutputLines(rpcIo.outputLines)).toContainEqual({
+				type: "pause_state_changed",
+				state: "pausing",
+			});
+
+			await vi.waitFor(() => {
+				expect(parseOutputLines(rpcIo.outputLines)).toContainEqual({
+					type: "pause_state_changed",
+					state: "paused",
+				});
+			});
+
+			lineHandler(JSON.stringify({ id: "paused-state", type: "get_state" }));
+			await vi.waitFor(() => {
+				const response = parseOutputLines(rpcIo.outputLines).find((record) => record.id === "paused-state");
+				expect(response).toMatchObject({
+					type: "response",
+					command: "get_state",
+					success: true,
+					data: { isStreaming: true, pauseState: "paused" },
+				});
+			});
+
+			lineHandler(JSON.stringify({ id: "resume", type: "resume" }));
+			await vi.waitFor(() => {
+				expect(parseOutputLines(rpcIo.outputLines)).toContainEqual({
+					id: "resume",
+					type: "response",
+					command: "resume",
+					success: true,
+				});
+				expect(parseOutputLines(rpcIo.outputLines)).toContainEqual({
+					type: "pause_state_changed",
+					state: "unpaused",
+				});
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
 	it("returns and clears queued steering and follow-up messages", async () => {
 		const { lineHandler, cleanup } = await startRpcMode({ withAuth: true, responseDelayMs: 500 });
 

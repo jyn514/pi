@@ -1512,6 +1512,24 @@ pi.on("session_start", async (_event, ctx) => {
 });
 ```
 
+### pi.requestPause()
+
+Request a cooperative pause. Pi finishes already-admitted work, including the current provider response, its complete tool batch, and automatic work that has passed the completed-turn boundary, then parks the live agent loop before admitting another turn.
+
+```typescript
+pi.requestPause();
+```
+
+The request returns immediately. Pause state is process-local and is not restored with the session. Prompt-like extension work remains blocked while paused, but manual session controls retain their existing behavior.
+
+### pi.resume()
+
+Resume a session parked by `pi.requestPause()`. Calling `resume()` when the session is not paused has no effect.
+
+```typescript
+pi.resume();
+```
+
 ### pi.setSessionName(name)
 
 Set the session display name (shown in session selector instead of first message).

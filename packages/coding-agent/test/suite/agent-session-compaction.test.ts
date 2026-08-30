@@ -565,6 +565,72 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.faux.state.callCount).toBe(4);
 	});
 
+	it("parks after automatic compaction and its already-admitted continuation finish", async () => {
+		const largeTool: AgentTool = {
+			name: "large_result",
+			label: "Large result",
+			description: "Returns enough content to cross the compaction threshold",
+			parameters: Type.Object({}),
+			execute: async () => ({
+				content: [{ type: "text", text: `large-tool-result:${"x".repeat(6800)}` }],
+				details: {},
+			}),
+		};
+		let markCompactionStarted = () => {};
+		const compactionStarted = new Promise<void>((resolve) => {
+			markCompactionStarted = resolve;
+		});
+		let releaseCompaction = () => {};
+		const compactionReleased = new Promise<void>((resolve) => {
+			releaseCompaction = resolve;
+		});
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 2600, maxTokens: 100 }],
+			settings: { compaction: { enabled: true, reserveTokens: 400, keepRecentTokens: 1750 } },
+			tools: [largeTool],
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => {
+						markCompactionStarted();
+						await compactionReleased;
+						return {
+							compaction: {
+								summary: "compacted history",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: event.preparation.tokensBefore,
+								details: {},
+							},
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(`old-history:${"a".repeat(800)}`),
+			fauxAssistantMessage(`recent-history:${"b".repeat(800)}`),
+			fauxAssistantMessage(fauxToolCall("large_result", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("finished after compaction"),
+		]);
+
+		await harness.session.prompt("seed old history");
+		await harness.session.prompt("seed recent history");
+		const promptPromise = harness.session.prompt("run the large tool");
+		await compactionStarted;
+
+		harness.session.requestPause();
+		expect(harness.session.pauseState).toBe("pausing");
+		releaseCompaction();
+		await vi.waitFor(() => expect(harness.session.pauseState).toBe("paused"));
+
+		expect(harness.faux.state.callCount).toBe(4);
+		expect(harness.session.getLastAssistantText()).toBe("finished after compaction");
+
+		harness.session.resume();
+		await promptPromise;
+		expect(harness.session.pauseState).toBe("unpaused");
+	});
+
 	it("does not compact after a terminating tool result", async () => {
 		const terminatingTool: AgentTool = {
 			name: "terminate_with_large_result",
