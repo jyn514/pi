@@ -507,16 +507,25 @@ describe("Editor component", () => {
 			assert.strictEqual(text, "Hällö Wörld! 😀 äöüÄÖÜß");
 		});
 
-		it("moves cursor to document start on Ctrl+A and inserts at the beginning", () => {
+		it("moves cursor to line start on Ctrl+A and inserts at the beginning", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 
 			editor.handleInput("a");
 			editor.handleInput("b");
-			editor.handleInput("\x01"); // Ctrl+A (move to start)
+			editor.handleInput("\x01"); // Ctrl+A (move to line start)
 			editor.handleInput("x"); // Insert at start
 
 			const text = editor.getText();
 			assert.strictEqual(text, "xab");
+		});
+
+		it("moves cursor to the edit buffer start on Ctrl+Home", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.setText("first\nsecond\nthird");
+
+			editor.handleInput("\x1b[1;5H"); // Ctrl+Home
+
+			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 0 });
 		});
 
 		it("deletes words correctly with Ctrl+W and Alt+Backspace", () => {

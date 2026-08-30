@@ -6313,6 +6313,7 @@ export class InteractiveMode {
 		const cursorRight = this.getEditorKeyDisplay("tui.editor.cursorRight");
 		const cursorWordLeft = this.getEditorKeyDisplay("tui.editor.cursorWordLeft");
 		const cursorWordRight = this.getEditorKeyDisplay("tui.editor.cursorWordRight");
+		const cursorBufferStart = this.getEditorKeyDisplay("tui.editor.cursorBufferStart");
 		const cursorLineStart = this.getEditorKeyDisplay("tui.editor.cursorLineStart");
 		const cursorLineEnd = this.getEditorKeyDisplay("tui.editor.cursorLineEnd");
 		const jumpForward = this.getEditorKeyDisplay("tui.editor.jumpForward");
@@ -6355,6 +6356,7 @@ export class InteractiveMode {
 |-----|--------|
 | \`${cursorUp}\` / \`${cursorDown}\` / \`${cursorLeft}\` / \`${cursorRight}\` | Move cursor / browse history |
 | \`${cursorWordLeft}\` / \`${cursorWordRight}\` | Move by word |
+| \`${cursorBufferStart}\` | Start of edit buffer |
 | \`${cursorLineStart}\` | Start of line |
 | \`${cursorLineEnd}\` | End of line |
 | \`${jumpForward}\` | Jump forward to character |

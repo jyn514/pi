@@ -777,6 +777,10 @@ export class Editor implements Component, Focusable {
 		}
 
 		// Cursor movement actions
+		if (kb.matches(data, "tui.editor.cursorBufferStart")) {
+			this.moveToBufferStart();
+			return;
+		}
 		if (kb.matches(data, "tui.editor.cursorLineStart")) {
 			this.moveToLineStart();
 			return;
@@ -1517,6 +1521,12 @@ export class Editor implements Component, Focusable {
 		const result = this.preferredVisualCol!;
 		this.preferredVisualCol = null;
 		return result;
+	}
+
+	private moveToBufferStart(): void {
+		this.lastAction = null;
+		this.state.cursorLine = 0;
+		this.setCursorCol(0);
 	}
 
 	private moveToLineStart(): void {

@@ -167,7 +167,7 @@ export class Input implements Component, Focusable {
 			return;
 		}
 
-		if (kb.matches(data, "tui.editor.cursorLineStart")) {
+		if (kb.matches(data, "tui.editor.cursorBufferStart") || kb.matches(data, "tui.editor.cursorLineStart")) {
 			this.lastAction = null;
 			this.cursor = 0;
 			return;

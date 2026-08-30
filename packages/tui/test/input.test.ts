@@ -34,6 +34,17 @@ describe("Input component", () => {
 		assert.strictEqual(input.getValue(), "\\x");
 	});
 
+	it("moves to the start on Ctrl+Home", () => {
+		const input = new Input();
+		input.setValue("value");
+		input.handleInput("\x05"); // Ctrl+E
+
+		input.handleInput("\x1b[1;5H"); // Ctrl+Home
+		input.handleInput("x");
+
+		assert.strictEqual(input.getValue(), "xvalue");
+	});
+
 	describe("render", () => {
 		it("does not overflow with wide CJK and fullwidth text", () => {
 			const width = 93;

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `tui.editor.cursorBufferStart`, bound to `Ctrl+Home` and `Cmd+Up` by default, to move to the start of the edit buffer.
+
 ## [0.84.4] - 2026-08-28
 
 ### Added
