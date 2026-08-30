@@ -1849,7 +1849,8 @@ export class DefaultPackageManager implements PackageManager {
 		try {
 			await this.runCommand("git", ["clone", source.repo, targetDir]);
 			if (source.ref) {
-				await this.runCommand("git", ["checkout", source.ref], { cwd: targetDir });
+				await this.runCommand("git", ["fetch", "origin", source.ref], { cwd: targetDir });
+				await this.runCommand("git", ["checkout", "--detach", "FETCH_HEAD"], { cwd: targetDir });
 			}
 			const packageJsonPath = join(targetDir, "package.json");
 			if (existsSync(packageJsonPath)) {
