@@ -1,7 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxThinking, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHarness, type Harness } from "./harness.ts";
 
 function normalizeEventOrder(events: Harness["events"]): string[] {
@@ -141,6 +141,35 @@ describe("AgentSession retry and event characterization", () => {
 
 		expect(harness.faux.state.callCount).toBe(1);
 		expect(harness.eventsOfType("auto_retry_start")).toEqual([]);
+	});
+
+	it("parks after retry preparation and retries exactly once after resume", async () => {
+		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 20 } } });
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			fauxAssistantMessage("recovered"),
+		]);
+		const retryStarted = new Promise<void>((resolve) => {
+			const unsubscribe = harness.session.subscribe((event) => {
+				if (event.type === "auto_retry_start") {
+					unsubscribe();
+					resolve();
+				}
+			});
+		});
+
+		const promptPromise = harness.session.prompt("test");
+		await retryStarted;
+		harness.session.requestPause();
+		await vi.waitFor(() => expect(harness.session.pauseState).toBe("paused"));
+		expect(harness.faux.state.callCount).toBe(1);
+
+		harness.session.resume();
+		await promptPromise;
+
+		expect(harness.faux.state.callCount).toBe(2);
+		expect(harness.eventsOfType("auto_retry_end").map((event) => event.success)).toEqual([true]);
 	});
 
 	it("cancels retry sleep when abortRetry is called", async () => {

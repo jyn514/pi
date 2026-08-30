@@ -7,7 +7,7 @@
 
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Model } from "@earendil-works/pi-ai";
-import type { SessionStats } from "../../core/agent-session.ts";
+import type { PauseState, SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
@@ -23,6 +23,8 @@ export type RpcCommand =
 	| { id?: string; type: "steer"; message: string; images?: ImageContent[] }
 	| { id?: string; type: "follow_up"; message: string; images?: ImageContent[] }
 	| { id?: string; type: "abort" }
+	| { id?: string; type: "pause" }
+	| { id?: string; type: "resume" }
 	| { id?: string; type: "clear_queue" }
 	| { id?: string; type: "new_session"; parentSession?: string }
 
@@ -98,6 +100,7 @@ export interface RpcSessionState {
 	thinkingLevel: ThinkingLevel;
 	isStreaming: boolean;
 	isCompacting: boolean;
+	pauseState: PauseState;
 	steeringMode: "all" | "one-at-a-time";
 	followUpMode: "all" | "one-at-a-time";
 	sessionFile?: string;
@@ -119,6 +122,8 @@ export type RpcResponse =
 	| { id?: string; type: "response"; command: "steer"; success: true }
 	| { id?: string; type: "response"; command: "follow_up"; success: true }
 	| { id?: string; type: "response"; command: "abort"; success: true }
+	| { id?: string; type: "response"; command: "pause"; success: true }
+	| { id?: string; type: "response"; command: "resume"; success: true }
 	| {
 			id?: string;
 			type: "response";

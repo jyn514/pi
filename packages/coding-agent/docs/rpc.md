@@ -134,6 +134,26 @@ Response:
 {"type": "response", "command": "abort", "success": true}
 ```
 
+#### pause / resume
+
+Request a cooperative pause after the current complete turn, or resume a paused session.
+
+```json
+{"type": "pause"}
+{"type": "resume"}
+```
+
+Responses are immediate:
+
+```json
+{"type": "response", "command": "pause", "success": true}
+{"type": "response", "command": "resume", "success": true}
+```
+
+A pause governs harness-controlled agent work only. It does not interrupt a provider response, tool batch, or already-admitted prompt preflight. The completed-turn boundary is the linearization point: a request observed there changes the session to `"paused"` before automatic compaction, queue consumption, or another agent turn begins. Once that boundary has returned, the next automatic turn is admitted; a later pause request takes effect after that complete turn. A preflight already running may finish its extension and validation work, but its provider turn remains blocked while paused. While `pauseState` is `"paused"`, new prompts—including extension commands—steering, and follow-up work are rejected because they feed the harness; explicitly queued next-turn context is retained. Pause adds no restrictions to user-controlled operations such as bash execution, manual compaction, tree navigation, session replacement, and other control commands; their existing safety restrictions still apply.
+
+Use [`pause_state_changed`](#pause_state_changed) or `get_state.pauseState` to distinguish an accepted request from a session that has reached its pause boundary.
+
 #### clear_queue
 
 Remove queued steering and follow-up messages and return their text.
@@ -201,6 +221,7 @@ Response:
     "thinkingLevel": "medium",
     "isStreaming": false,
     "isCompacting": false,
+    "pauseState": "unpaused",
     "steeringMode": "all",
     "followUpMode": "one-at-a-time",
     "sessionFile": "/path/to/session.jsonl",
@@ -213,7 +234,7 @@ Response:
 }
 ```
 
-The `model` field is a full [Model](#model) object or `null`. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set.
+The `model` field is a full [Model](#model) object or `null`. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set. `pauseState` is `"unpaused"`, `"pausing"`, or `"paused"`; it is independent of `isStreaming`, which remains true while an active run is parked.
 
 #### get_messages
 
@@ -863,6 +884,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `agent_start` | Agent begins processing |
 | `agent_end` | One low-level agent run completes (may still be followed by retry, compaction, or queued continuations) |
 | `agent_settled` | Agent run is fully settled; no automatic retry, compaction retry, or queued continuation remains |
+| `pause_state_changed` | Cooperative pause state changed |
 | `turn_start` | New turn begins |
 | `turn_end` | Turn completes (includes assistant message and tool results) |
 | `message_start` | Message begins |
@@ -909,6 +931,18 @@ Emitted after the full session-level run settles. At this point Pi will not cont
 ```json
 {"type": "agent_settled"}
 ```
+
+### pause_state_changed
+
+Emitted when a cooperative pause is requested, reached, cancelled, or resumed.
+
+```json
+{"type": "pause_state_changed", "state": "pausing"}
+{"type": "pause_state_changed", "state": "paused"}
+{"type": "pause_state_changed", "state": "unpaused"}
+```
+
+`agent_settled` is not emitted merely because an active run is parked. Resume or abort the session to let that session-level run settle.
 
 ### turn_start / turn_end
 

@@ -220,6 +220,16 @@ export class RpcClient {
 		await this.send({ type: "abort" });
 	}
 
+	/** Request a cooperative pause after the current complete turn. */
+	async pause(): Promise<void> {
+		await this.send({ type: "pause" });
+	}
+
+	/** Resume a cooperatively paused session. */
+	async resume(): Promise<void> {
+		await this.send({ type: "resume" });
+	}
+
 	/**
 	 * Clear queued steering and follow-up messages, returning their text.
 	 */

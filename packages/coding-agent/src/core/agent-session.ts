@@ -148,6 +148,8 @@ export function parseSkillBlock(text: string): ParsedSkillBlock | null {
 }
 
 /** Session-specific events that extend the core AgentEvent */
+export type PauseState = "unpaused" | "pausing" | "paused";
+
 export type AgentSessionEvent =
 	| Exclude<AgentEvent, { type: "agent_end" }>
 	| {
@@ -156,6 +158,7 @@ export type AgentSessionEvent =
 			willRetry: boolean;
 	  }
 	| { type: "agent_settled" }
+	| { type: "pause_state_changed"; state: PauseState }
 	| {
 			type: "queue_update";
 			steering: readonly string[];
@@ -323,6 +326,11 @@ export class AgentSession {
 	private _isAgentRunActive = false;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
+	private _pauseState: PauseState = "unpaused";
+	private _pauseWaitPromise: Promise<void> | undefined;
+	private _resolvePauseWait: (() => void) | undefined;
+	private _pauseCancellationGeneration = 0;
+	private _previousShouldStopAfterTurn: Agent["shouldStopAfterTurn"];
 
 	/** Tracks pending steering messages for UI display. Removed when delivered. */
 	private _steeringMessages: string[] = [];
@@ -406,6 +414,7 @@ export class AgentSession {
 		this._installAgentToolHooks();
 		this._installAgentNextTurnRefresh();
 		this._installAgentForcedPromptProjection();
+		this._installAgentPauseBarrier();
 
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
@@ -563,6 +572,19 @@ export class AgentSession {
 		};
 	}
 
+	private _installAgentPauseBarrier(): void {
+		this._previousShouldStopAfterTurn = this.agent.shouldStopAfterTurn;
+		this.agent.shouldStopAfterTurn = async (_turn, signal) => {
+			await this._waitForPauseBoundary();
+			return signal?.aborted === true;
+		};
+	}
+
+	private _restoreAgentPauseBarrier(): void {
+		this.agent.shouldStopAfterTurn = this._previousShouldStopAfterTurn;
+		this._previousShouldStopAfterTurn = undefined;
+	}
+
 	private _installAgentNextTurnRefresh(): void {
 		const previousPrepareNextTurnWithContext =
 			this.agent.prepareNextTurnWithContext ??
@@ -607,6 +629,18 @@ export class AgentSession {
 	private _emit(event: AgentSessionEvent): void {
 		for (const l of this._eventListeners) {
 			l(event);
+		}
+	}
+
+	private _setPauseState(state: PauseState): void {
+		if (this._pauseState === state) return;
+		this._pauseState = state;
+		this._emit({ type: "pause_state_changed", state });
+	}
+
+	private _throwIfPausedForWork(): void {
+		if (this._pauseState === "paused") {
+			throw new Error("Session is paused; resume it before submitting work.");
 		}
 	}
 
@@ -898,6 +932,8 @@ export class AgentSession {
 	 */
 	dispose(): void {
 		try {
+			this._clearPause(true);
+			this._restoreAgentPauseBarrier();
 			this.abortRetry();
 			this.abortCompaction();
 			this.abortBranchSummary();
@@ -932,6 +968,11 @@ export class AgentSession {
 	/** Current thinking level */
 	get thinkingLevel(): ThinkingLevel {
 		return this.agent.state.thinkingLevel;
+	}
+
+	/** Current cooperative pause state. */
+	get pauseState(): PauseState {
+		return this._pauseState;
 	}
 
 	/** Whether the session is currently processing an agent run or post-run continuation. */
@@ -1174,11 +1215,32 @@ export class AgentSession {
 	// Prompting
 	// =========================================================================
 
-	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
+	private async _runAgentPrompt(
+		messages: AgentMessage | AgentMessage[],
+		operationGeneration = this._pauseCancellationGeneration,
+	): Promise<void> {
+		// Do not yield when unpaused: admission and marking the run active must be atomic.
+		if (this._pauseState !== "unpaused") {
+			await this._waitForPauseBoundary();
+		}
+		if (operationGeneration !== this._pauseCancellationGeneration) return;
 		this._isAgentRunActive = true;
 		try {
 			await this.agent.prompt(messages);
-			while (await this._handlePostAgentRun()) {
+			while (true) {
+				// Error turns bypass shouldStopAfterTurn, and a pause can also arrive
+				// during session-level retry or automatic compaction preparation.
+				if (this._pauseState !== "unpaused") {
+					await this._waitForPauseBoundary();
+				}
+				if (operationGeneration !== this._pauseCancellationGeneration) break;
+
+				const postRunContinuation = await this._handlePostAgentRun();
+
+				if (this._pauseState !== "unpaused") {
+					await this._waitForPauseBoundary();
+				}
+				if (operationGeneration !== this._pauseCancellationGeneration || !postRunContinuation) break;
 				await this.agent.continue();
 			}
 		} finally {
@@ -1249,11 +1311,15 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
+		const operationGeneration = this._pauseCancellationGeneration;
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 		const preflightResult = options?.preflightResult;
 		let messages: AgentMessage[] | undefined;
+		let nextSystemPrompt: string | undefined;
 
 		try {
+			this._throwIfPausedForWork();
+
 			// Handle extension commands first (execute immediately, even during streaming)
 			// Extension commands manage their own LLM interaction via pi.sendMessage()
 			if (expandPromptTemplates && text.startsWith("/")) {
@@ -1352,12 +1418,6 @@ export class AgentSession {
 				timestamp: Date.now(),
 			});
 
-			// Inject any pending "nextTurn" messages as context alongside the user message
-			for (const msg of this._pendingNextTurnMessages) {
-				messages.push(msg);
-			}
-			this._pendingNextTurnMessages = [];
-
 			// Emit before_agent_start extension event
 			const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;
 			const result = await this._extensionRunner.emitBeforeAgentStart(
@@ -1376,7 +1436,6 @@ export class AgentSession {
 				messages.push({
 					role: "custom",
 					customType: msg.customType,
-					// Untyped extensions can pass null/missing content; normalize at ingestion.
 					content: msg.content ?? [],
 					display: msg.display,
 					details: msg.details,
@@ -1386,6 +1445,7 @@ export class AgentSession {
 			const updateMessage = this._preparePromptAndToolLoadout(result.systemPromptOptions);
 			this._runSystemPromptOptions = result.systemPromptOptions;
 			if (updateMessage) messages.unshift(updateMessage);
+			nextSystemPrompt = result?.systemPrompt;
 		} catch (error) {
 			preflightResult?.(false);
 			throw error;
@@ -1395,8 +1455,30 @@ export class AgentSession {
 			return;
 		}
 
+		if (this._pauseState !== "unpaused") {
+			await this._waitForPauseBoundary();
+		}
+		if (operationGeneration !== this._pauseCancellationGeneration) {
+			preflightResult?.(false);
+			return;
+		}
+
+		// Pause or abort may have been requested while asynchronous preflight ran.
+		// Recheck before committing staged prompt state and admitting the provider run.
+		if (this._pauseState !== "unpaused") {
+			await this._waitForPauseBoundary();
+		}
+		if (operationGeneration !== this._pauseCancellationGeneration) return;
+
+		for (const msg of this._pendingNextTurnMessages) {
+			messages.push(msg);
+		}
+		this._pendingNextTurnMessages = [];
+		this._systemPromptOverride = nextSystemPrompt;
+		this.agent.state.systemPrompt = nextSystemPrompt ?? this._baseSystemPrompt;
 		preflightResult?.(true);
-		await this._runAgentPrompt(messages);
+
+		await this._runAgentPrompt(messages, operationGeneration);
 	}
 
 	/**
@@ -1497,6 +1579,7 @@ export class AgentSession {
 	 * @throws Error if text is an extension command
 	 */
 	async steer(text: string, images?: ImageContent[], options?: { source?: InputSource }): Promise<void> {
+		this._throwIfPausedForWork();
 		await this._queueUserInput(text, images, "steer", options?.source ?? "interactive");
 	}
 
@@ -1509,6 +1592,7 @@ export class AgentSession {
 	 * @throws Error if text is an extension command
 	 */
 	async followUp(text: string, images?: ImageContent[], options?: { source?: InputSource }): Promise<void> {
+		this._throwIfPausedForWork();
 		await this._queueUserInput(text, images, "followUp", options?.source ?? "interactive");
 	}
 
@@ -1578,6 +1662,9 @@ export class AgentSession {
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
 		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
 	): Promise<void> {
+		if (options?.triggerTurn || options?.deliverAs === "steer" || options?.deliverAs === "followUp") {
+			this._throwIfPausedForWork();
+		}
 		const appMessage = {
 			role: "custom" as const,
 			customType: message.customType,
@@ -1708,10 +1795,58 @@ export class AgentSession {
 		return this._resourceLoader;
 	}
 
+	/** Request a cooperative pause after the current complete turn. */
+	requestPause(): void {
+		if (this._pauseState !== "unpaused") return;
+		this._setPauseState(this._isAgentRunActive ? "pausing" : "paused");
+	}
+
+	/** Resume work parked by requestPause(). */
+	resume(): void {
+		if (this._pauseState === "unpaused") return;
+		this._setPauseState("unpaused");
+		this._releasePauseWaiter();
+	}
+
+	private async _waitForPauseBoundary(): Promise<void> {
+		while (this._pauseState !== "unpaused") {
+			if (this._pauseState === "pausing") {
+				this._setPauseState("paused");
+			}
+			await this._waitWhilePaused();
+		}
+	}
+
+	private _waitWhilePaused(): Promise<void> {
+		if (this._pauseState !== "paused") return Promise.resolve();
+		if (!this._pauseWaitPromise) {
+			this._pauseWaitPromise = new Promise((resolve) => {
+				this._resolvePauseWait = resolve;
+			});
+		}
+		return this._pauseWaitPromise;
+	}
+
+	private _releasePauseWaiter(): void {
+		const resolve = this._resolvePauseWait;
+		this._pauseWaitPromise = undefined;
+		this._resolvePauseWait = undefined;
+		resolve?.();
+	}
+
+	private _clearPause(cancelPendingWork = false): void {
+		if (cancelPendingWork) {
+			this._pauseCancellationGeneration++;
+		}
+		this._setPauseState("unpaused");
+		this._releasePauseWaiter();
+	}
+
 	/**
 	 * Abort current operation and wait for agent to become idle.
 	 */
 	async abort(): Promise<void> {
+		this._clearPause(true);
 		this.abortRetry();
 		this.abortCompaction();
 		this.abortBranchSummary();
@@ -2363,6 +2498,7 @@ export class AgentSession {
 	 */
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
 		const model = this.model;
+		const operationGeneration = this._pauseCancellationGeneration;
 		const settings = this.settingsManager.getCompactionSettings(model);
 		let started = false;
 		let fromExtension = false;
@@ -2380,6 +2516,8 @@ export class AgentSession {
 			if (!preparation) {
 				return false;
 			}
+
+			if (operationGeneration !== this._pauseCancellationGeneration) return false;
 
 			this._emit({ type: "compaction_start", reason });
 			this._autoCompactionAbortController = new AbortController();
@@ -2419,6 +2557,17 @@ export class AgentSession {
 					extensionCompaction = extensionResult.compaction;
 					fromExtension = true;
 				}
+			}
+
+			if (operationGeneration !== this._pauseCancellationGeneration) {
+				this._emit({ type: "compaction_end", reason, result: undefined, aborted: true, willRetry: false });
+				await this._emitSessionCompactFailed({
+					reason,
+					aborted: true,
+					willRetry: false,
+					fromExtension,
+				});
+				return false;
 			}
 
 			let summary: string;
@@ -2713,6 +2862,8 @@ export class AgentSession {
 						this._emit({ type: "entry_appended", entry });
 					}
 				},
+				requestPause: () => this.requestPause(),
+				resume: () => this.resume(),
 				setSessionName: (name) => {
 					this.setSessionName(name);
 				},
