@@ -52,7 +52,7 @@
 	"devDependencies": {
 		"@anthropic-ai/sandbox-runtime": "0.0.26",
 		"@biomejs/biome": "2.3.5",
-		"@earendil-works/pi-ai-model-data": "npm:@earendil-works/pi-ai@0.84.2",
+		"@earendil-works/pi-ai-model-data": "npm:@earendil-works/pi-ai@0.84.4",
 		"@types/node": "22.19.19",
 		"@typescript/native-preview": "7.0.0-dev.20260120.1",
 		"esbuild": "0.28.1",
