@@ -38,6 +38,10 @@
 - Fixed terminal startup under restricted seccomp policies that reject the `SIGWINCH` self-signal ([#8898](https://github.com/earendil-works/pi/pull/8898) by [@bartlomiejkida](https://github.com/bartlomiejkida)).
 - Fixed Zed terminal image capability detection ([#8828](https://github.com/earendil-works/pi/pull/8828) by [@Perlence](https://github.com/Perlence)).
 
+### Added
+
+- Added `tui.editor.cursorBufferStart`, bound to `Ctrl+Home` and `Cmd+Up` by default, to move to the start of the edit buffer.
+
 ## [0.84.4] - 2026-08-28
 
 ### Added
