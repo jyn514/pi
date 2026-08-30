@@ -39,6 +39,10 @@
       "$ref": "#/$defs/KeybindingValue",
       "description": "Move cursor word right"
     },
+    "tui.editor.cursorBufferStart": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Move to edit buffer start"
+    },
     "tui.editor.cursorLineStart": {
       "$ref": "#/$defs/KeybindingValue",
       "description": "Move to line start"

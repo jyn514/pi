@@ -14,6 +14,7 @@ export interface Keybindings {
 	"tui.editor.cursorRight": true;
 	"tui.editor.cursorWordLeft": true;
 	"tui.editor.cursorWordRight": true;
+	"tui.editor.cursorBufferStart": true;
 	"tui.editor.cursorLineStart": true;
 	"tui.editor.cursorLineEnd": true;
 	"tui.editor.jumpForward": true;
@@ -94,6 +95,10 @@ export const TUI_KEYBINDINGS = {
 	"tui.editor.cursorWordRight": {
 		defaultKeys: ["alt+right", "ctrl+right", "alt+f"],
 		description: "Move cursor word right",
+	},
+	"tui.editor.cursorBufferStart": {
+		defaultKeys: ["ctrl+home", "super+up"],
+		description: "Move to edit buffer start",
 	},
 	"tui.editor.cursorLineStart": {
 		defaultKeys: ["home", "ctrl+a"],
