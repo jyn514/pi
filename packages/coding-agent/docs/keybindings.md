@@ -57,6 +57,7 @@ Examples: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, `super+k`, `ctrl+sup
 | `tui.editor.cursorRight` | `right`, `ctrl+f` | Move cursor right |
 | `tui.editor.cursorWordLeft` | `alt+left`, `ctrl+left`, `alt+b` | Move cursor word left |
 | `tui.editor.cursorWordRight` | `alt+right`, `ctrl+right`, `alt+f` | Move cursor word right |
+| `tui.editor.cursorBufferStart` | `ctrl+home`, `super+up` (`cmd+up` on macOS) | Move to the start of the edit buffer |
 | `tui.editor.cursorLineStart` | `home`, `ctrl+a` | Move to line start |
 | `tui.editor.cursorLineEnd` | `end`, `ctrl+e` | Move to line end |
 | `tui.editor.jumpForward` | `ctrl+]` | Jump forward to character |
