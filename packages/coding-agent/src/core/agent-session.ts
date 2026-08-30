@@ -1938,8 +1938,21 @@ export class AgentSession {
 	 * @param customInstructions Optional instructions for the compaction summary
 	 */
 	async compact(customInstructions?: string): Promise<CompactionResult> {
-		await this.abort();
-		this._compactionAbortController = new AbortController();
+		if (this._compactionAbortController !== undefined) {
+			throw new Error("Compaction already in progress");
+		}
+
+		const abortController = new AbortController();
+		this._compactionAbortController = abortController;
+		try {
+			await this.abort();
+		} catch (error) {
+			if (this._compactionAbortController === abortController) {
+				this._compactionAbortController = undefined;
+			}
+			throw error;
+		}
+
 		this._emit({ type: "compaction_start", reason: "manual" });
 		let fromExtension = false;
 
@@ -1973,7 +1986,7 @@ export class AgentSession {
 					customInstructions,
 					reason: "manual",
 					willRetry: false,
-					signal: this._compactionAbortController.signal,
+					signal: abortController.signal,
 				})) as SessionBeforeCompactResult | undefined;
 
 				if (result?.cancel) {
@@ -2007,7 +2020,7 @@ export class AgentSession {
 					apiKey,
 					headers,
 					customInstructions,
-					this._compactionAbortController.signal,
+					abortController.signal,
 					env,
 					"manual",
 				);
@@ -2018,7 +2031,7 @@ export class AgentSession {
 				details = result.details;
 			}
 
-			if (this._compactionAbortController.signal.aborted) {
+			if (abortController.signal.aborted) {
 				throw new Error("Compaction cancelled");
 			}
 
@@ -2052,7 +2065,9 @@ export class AgentSession {
 				details,
 			};
 			// compaction_end listeners may submit queued prompts, so expose idle state before notifying them.
-			this._compactionAbortController = undefined;
+			if (this._compactionAbortController === abortController) {
+				this._compactionAbortController = undefined;
+			}
 			this._emit({
 				type: "compaction_end",
 				reason: "manual",
@@ -2065,7 +2080,9 @@ export class AgentSession {
 			const message = error instanceof Error ? error.message : String(error);
 			const aborted = message === "Compaction cancelled" || (error instanceof Error && error.name === "AbortError");
 			const errorMessage = aborted ? undefined : `Compaction failed: ${message}`;
-			this._compactionAbortController = undefined;
+			if (this._compactionAbortController === abortController) {
+				this._compactionAbortController = undefined;
+			}
 			this._emit({
 				type: "compaction_end",
 				reason: "manual",
@@ -2083,7 +2100,9 @@ export class AgentSession {
 			});
 			throw error;
 		} finally {
-			this._compactionAbortController = undefined;
+			if (this._compactionAbortController === abortController) {
+				this._compactionAbortController = undefined;
+			}
 		}
 	}
 
