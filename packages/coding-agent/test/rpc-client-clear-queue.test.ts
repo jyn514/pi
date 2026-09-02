@@ -6,7 +6,24 @@ type RpcClientPrivate = {
 	getData: <T>(response: unknown) => T;
 };
 
-describe("RpcClient clearQueue", () => {
+describe("RpcClient control commands", () => {
+	it("sends pause and resume RPC commands", async () => {
+		const client = new RpcClient();
+		const privateClient = client as unknown as RpcClientPrivate;
+		const send = vi.fn(async (command: { type: string }) => ({
+			type: "response",
+			command: command.type,
+			success: true,
+		}));
+		privateClient.send = send;
+
+		await client.pause();
+		await client.resume();
+
+		expect(send).toHaveBeenNthCalledWith(1, { type: "pause" });
+		expect(send).toHaveBeenNthCalledWith(2, { type: "resume" });
+	});
+
 	it("sends the clear_queue RPC command", async () => {
 		const client = new RpcClient();
 		const privateClient = client as unknown as RpcClientPrivate;

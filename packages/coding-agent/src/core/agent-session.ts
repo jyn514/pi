@@ -193,6 +193,8 @@ type WithParentToolCallId<E> = E extends {
 	: E;
 
 /** Session-specific events that extend the core AgentEvent */
+export type PauseState = "unpaused" | "pausing" | "paused";
+
 export type AgentSessionEvent =
 	| WithParentToolCallId<Exclude<AgentEvent, { type: "agent_end" }>>
 	| {
@@ -201,6 +203,7 @@ export type AgentSessionEvent =
 			willRetry: boolean;
 	  }
 	| { type: "agent_settled"; aborted: boolean }
+	| { type: "pause_state_changed"; state: PauseState }
 	| {
 			type: "queue_update";
 			steering: readonly string[];
@@ -390,6 +393,10 @@ export class AgentSession {
 	private _agentRunAbortRequested = false;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
+	private _pauseState: PauseState = "unpaused";
+	private _pauseWaitPromise: Promise<void> | undefined;
+	private _resolvePauseWait: (() => void) | undefined;
+	private _pauseCancellationGeneration = 0;
 
 	/** Tracks pending steering messages for UI display. Removed when delivered. */
 	private _steeringMessages: string[] = [];
@@ -891,6 +898,8 @@ export class AgentSession {
 			this._boundaryDispatchedMessages.add(turn.message);
 			const extensionContinue = await this._dispatchTurnEndBoundary(turn.message, turn.toolResults);
 			const previousDecision = await previousFinishTurn?.(turn, signal);
+			if (this._pauseState !== "unpaused") await this._waitForPauseBoundary();
+			if (signal?.aborted) return { action: "end" };
 			if (previousDecision?.action === "end") return previousDecision;
 			if (extensionContinue || previousDecision?.action === "continue") return { action: "continue" };
 			return undefined;
@@ -1041,6 +1050,18 @@ export class AgentSession {
 	private _emit(event: AgentSessionEvent): void {
 		for (const l of this._eventListeners) {
 			l(event);
+		}
+	}
+
+	private _setPauseState(state: PauseState): void {
+		if (this._pauseState === state) return;
+		this._pauseState = state;
+		this._emit({ type: "pause_state_changed", state });
+	}
+
+	private _throwIfPausedForWork(): void {
+		if (this._pauseState === "paused") {
+			throw new Error("Session is paused; resume it before submitting work.");
 		}
 	}
 
@@ -1397,6 +1418,7 @@ export class AgentSession {
 	 */
 	dispose(): void {
 		try {
+			this._clearPause(true);
 			this.abortRetry();
 			this.abortCompaction();
 			this.abortBranchSummary();
@@ -1461,6 +1483,10 @@ export class AgentSession {
 		return model && { model, thinkingLevel: latest?.thinkingLevel };
 	}
 
+	/** Current cooperative pause state. */
+	get pauseState(): PauseState {
+		return this._pauseState;
+	}
 	/** Whether the session is currently processing an agent run or post-run continuation. */
 	get isStreaming(): boolean {
 		return this._isAgentRunActive;
@@ -1835,7 +1861,16 @@ export class AgentSession {
 	 * starting another, and an abort requested meanwhile aborts the run as soon as it exists.
 	 * @param onStarted Called once the run's messages are prepared, before the first request.
 	 */
-	private async _startRun(trigger: BeforeAgentStartTrigger, onStarted?: () => void): Promise<void> {
+	private async _startRun(
+		trigger: BeforeAgentStartTrigger,
+		onStarted?: () => void,
+		operationGeneration = this._pauseCancellationGeneration,
+	): Promise<void> {
+		// Do not yield when unpaused: admission and marking the run active must be atomic.
+		if (this._pauseState !== "unpaused") {
+			await this._waitForPauseBoundary();
+		}
+		if (operationGeneration !== this._pauseCancellationGeneration) return;
 		this._isAgentRunActive = true;
 		this._agentRunAbortRequested = false;
 		let messages: AgentMessage[];
@@ -1863,13 +1898,35 @@ export class AgentSession {
 		try {
 			await this.agent.prompt(messages);
 			while (!this._agentRunAbortRequested) {
-				if (await this._handlePostAgentRun()) {
-					if (this._agentRunAbortRequested) break;
+				// Error turns bypass shouldStopAfterTurn, and a pause can also arrive
+				// during session-level retry or automatic compaction preparation.
+				if (this._pauseState !== "unpaused") {
+					await this._waitForPauseBoundary();
+				}
+				if (operationGeneration !== this._pauseCancellationGeneration || this._agentRunAbortRequested) break;
+
+				const postRunContinuation = await this._handlePostAgentRun();
+
+				if (this._pauseState !== "unpaused") {
+					await this._waitForPauseBoundary();
+				}
+				if (operationGeneration !== this._pauseCancellationGeneration || this._agentRunAbortRequested) break;
+				if (postRunContinuation) {
 					await this.agent.continue();
 					continue;
 				}
-				if (this._agentRunAbortRequested || !(await this._runBeforeSettleBoundary())) break;
-				if (this._agentRunAbortRequested) break;
+
+				const beforeSettleContinuation = await this._runBeforeSettleBoundary();
+				if (this._pauseState !== "unpaused") {
+					await this._waitForPauseBoundary();
+				}
+				if (
+					operationGeneration !== this._pauseCancellationGeneration ||
+					this._agentRunAbortRequested ||
+					!beforeSettleContinuation
+				) {
+					break;
+				}
 				await this.agent.continue();
 			}
 		} finally {
@@ -1878,6 +1935,9 @@ export class AgentSession {
 			this._runSystemPromptOptions = undefined;
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
+			if (this._pauseState === "pausing") {
+				this._setPauseState("paused");
+			}
 			await this._emitAgentSettled();
 		}
 	}
@@ -2061,6 +2121,8 @@ export class AgentSession {
 			this._deferredSettledActions.push(async () => await this.prompt(text, options));
 			return;
 		}
+		const operationGeneration = this._pauseCancellationGeneration;
+		this._throwIfPausedForWork();
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 		const preflightResult = options?.preflightResult;
 		// Handle extension commands first (execute immediately, even during streaming)
@@ -2136,8 +2198,10 @@ export class AgentSession {
 			throw new Error(formatNoApiKeyFoundMessage(this.model.provider));
 		}
 
-		await this._startRun({ messageType: "user", prompt: expandedText, images: currentImages }, () =>
-			preflightResult?.("started"),
+		await this._startRun(
+			{ messageType: "user", prompt: expandedText, images: currentImages },
+			() => preflightResult?.("started"),
+			operationGeneration,
 		);
 	}
 
@@ -2244,6 +2308,7 @@ export class AgentSession {
 		images?: ImageContent[],
 		options?: { source?: InputSource },
 	): Promise<QueuedInputDisposition> {
+		this._throwIfPausedForWork();
 		return this._queueUserInput(text, images, "steer", options?.source ?? "interactive");
 	}
 
@@ -2260,6 +2325,7 @@ export class AgentSession {
 		images?: ImageContent[],
 		options?: { source?: InputSource },
 	): Promise<QueuedInputDisposition> {
+		this._throwIfPausedForWork();
 		return this._queueUserInput(text, images, "followUp", options?.source ?? "interactive");
 	}
 
@@ -2325,6 +2391,9 @@ export class AgentSession {
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
 		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
 	): Promise<void> {
+		if (options?.triggerTurn || options?.deliverAs === "steer" || options?.deliverAs === "followUp") {
+			this._throwIfPausedForWork();
+		}
 		const appMessage = {
 			role: "custom" as const,
 			customType: message.customType,
@@ -2459,10 +2528,58 @@ export class AgentSession {
 		return this._resourceLoader;
 	}
 
+	/** Request a cooperative pause after the current complete turn. */
+	requestPause(): void {
+		if (this._pauseState !== "unpaused") return;
+		this._setPauseState(this._isAgentRunActive ? "pausing" : "paused");
+	}
+
+	/** Resume work parked by requestPause(). */
+	resume(): void {
+		if (this._pauseState === "unpaused") return;
+		this._setPauseState("unpaused");
+		this._releasePauseWaiter();
+	}
+
+	private async _waitForPauseBoundary(): Promise<void> {
+		while (this._pauseState !== "unpaused") {
+			if (this._pauseState === "pausing") {
+				this._setPauseState("paused");
+			}
+			await this._waitWhilePaused();
+		}
+	}
+
+	private _waitWhilePaused(): Promise<void> {
+		if (this._pauseState !== "paused") return Promise.resolve();
+		if (!this._pauseWaitPromise) {
+			this._pauseWaitPromise = new Promise((resolve) => {
+				this._resolvePauseWait = resolve;
+			});
+		}
+		return this._pauseWaitPromise;
+	}
+
+	private _releasePauseWaiter(): void {
+		const resolve = this._resolvePauseWait;
+		this._pauseWaitPromise = undefined;
+		this._resolvePauseWait = undefined;
+		resolve?.();
+	}
+
+	private _clearPause(cancelPendingWork = false): void {
+		if (cancelPendingWork) {
+			this._pauseCancellationGeneration++;
+		}
+		this._setPauseState("unpaused");
+		this._releasePauseWaiter();
+	}
+
 	/**
 	 * Abort current operation and wait for agent to become idle.
 	 */
 	async abort(): Promise<void> {
+		this._clearPause(true);
 		if (this._isAgentRunActive) {
 			this._agentRunAbortRequested = true;
 		}
@@ -3147,6 +3264,7 @@ export class AgentSession {
 	 */
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
 		const model = this.model;
+		const operationGeneration = this._pauseCancellationGeneration;
 		const settings = this.settingsManager.getCompactionSettings(model);
 		let abortController: AbortController | undefined;
 		let started = false;
@@ -3163,6 +3281,8 @@ export class AgentSession {
 			if (!preparation) {
 				return false;
 			}
+
+			if (operationGeneration !== this._pauseCancellationGeneration) return false;
 
 			abortController = new AbortController();
 			this._autoCompactionAbortController = abortController;
@@ -3194,6 +3314,17 @@ export class AgentSession {
 				}
 			}
 			abortController.signal.throwIfAborted();
+
+			if (operationGeneration !== this._pauseCancellationGeneration) {
+				this._emit({ type: "compaction_end", reason, result: undefined, aborted: true, willRetry: false });
+				await this._emitSessionCompactFailed({
+					reason,
+					aborted: true,
+					willRetry: false,
+					fromExtension,
+				});
+				return false;
+			}
 
 			let summary: string;
 			let firstKeptEntryId: string;
@@ -3461,6 +3592,9 @@ export class AgentSession {
 						this._emit({ type: "entry_appended", entry });
 					}
 				},
+				getPauseState: () => this.pauseState,
+				requestPause: () => this.requestPause(),
+				resume: () => this.resume(),
 				setSessionName: (name) => {
 					this.setSessionName(name);
 				},
