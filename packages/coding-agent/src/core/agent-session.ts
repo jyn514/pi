@@ -2033,151 +2033,138 @@ export class AgentSession {
 		const operationGeneration = this._pauseCancellationGeneration;
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 		const preflightResult = options?.preflightResult;
-		let messages: AgentMessage[] | undefined;
-		let nextSystemPromptOptions: NormalizedBuildSystemPromptOptions | undefined;
 
-		try {
-			this._throwIfPausedForWork();
+		this._throwIfPausedForWork();
 
-			// Handle extension commands first (execute immediately, even during streaming)
-			// Extension commands manage their own LLM interaction via pi.sendMessage()
-			if (expandPromptTemplates && text.startsWith("/")) {
-				const handled = await this._tryExecuteExtensionCommand(text);
-				if (handled) {
-					// Extension command executed, no prompt to send
-					preflightResult?.("handled");
-					return;
-				}
-			}
-
-			if (this._compactionAbortController !== undefined) {
-				throw new Error(
-					"Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.",
-				);
-			}
-
-			const processedInput = await this._runInputHandlers(
-				text,
-				options?.images,
-				options?.source ?? "interactive",
-				this.isStreaming ? options?.streamingBehavior : undefined,
-			);
-			if (!processedInput) {
+		// Handle extension commands first (execute immediately, even during streaming)
+		// Extension commands manage their own LLM interaction via pi.sendMessage()
+		if (expandPromptTemplates && text.startsWith("/")) {
+			const handled = await this._tryExecuteExtensionCommand(text);
+			if (handled) {
+				// Extension command executed, no prompt to send
 				preflightResult?.("handled");
 				return;
 			}
-			const { text: currentText, images: currentImages } = processedInput;
-
-			// Expand skill commands (/skill:name args) and prompt templates (/template args)
-			let expandedText = currentText;
-			if (expandPromptTemplates) {
-				expandedText = this._expandSkillCommand(expandedText);
-				expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
-			}
-
-			// If streaming, queue via steer() or followUp() based on option
-			if (this.isStreaming) {
-				if (!options?.streamingBehavior) {
-					throw new Error(
-						"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
-					);
-				}
-				if (options.streamingBehavior === "followUp") {
-					await this._queueFollowUp(expandedText, currentImages);
-				} else {
-					await this._queueSteer(expandedText, currentImages);
-				}
-				preflightResult?.("queued");
-				return;
-			}
-
-			// Flush any pending bash and custom messages before the new prompt
-			this._flushPendingBashMessages();
-			this._flushPendingCustomMessages();
-
-			// Validate model
-			if (!this.model) {
-				throw new Error(formatNoModelSelectedMessage());
-			}
-
-			const hasConfiguredAuth =
-				this._modelRuntime.hasConfiguredAuth(this.model.provider) ||
-				(await this._modelRuntime.checkAuth(this.model.provider)) !== undefined;
-			if (!hasConfiguredAuth) {
-				const isOAuth = this._modelRuntime.isUsingOAuth(this.model.provider);
-				if (isOAuth) {
-					throw new Error(
-						`Authentication failed for "${this.model.provider}". ` +
-							`Credentials may have expired or network is unavailable. ` +
-							`Run '/login ${this.model.provider}' to re-authenticate.`,
-					);
-				}
-				throw new Error(formatNoApiKeyFoundMessage(this.model.provider));
-			}
-
-			// Check if we need to compact before sending (catches aborted responses).
-			// The user's new prompt is sent below, so do not call agent.continue() here.
-			const lastAssistant = this._findLastAssistantMessage();
-			if (lastAssistant) {
-				await this._checkCompaction(lastAssistant, false);
-			}
-
-			// Emit before_agent_start before normalizing images so extension-driven model
-			// selection determines the resize profile used for the request and history.
-			const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;
-			const result = await this._extensionRunner.emitBeforeAgentStart(
-				expandedText,
-				currentImages,
-				this._baseSystemPromptOptions,
-			);
-			// Handlers may edit event.systemPromptOptions.selectedTools or call setActiveTools(),
-			// which updates the live loadout instead. An explicit edit wins; otherwise the live
-			// loadout is authoritative, so a setActiveTools() call is not undone here.
-			const handlerEditedTools =
-				result.systemPromptOptions.selectedTools.length !== selectedToolsBefore.length ||
-				result.systemPromptOptions.selectedTools.some((name, index) => name !== selectedToolsBefore[index]);
-			if (!handlerEditedTools) result.systemPromptOptions.selectedTools = this.getActiveToolNames();
-
-			const normalized = await this._normalizePromptImages(currentImages);
-			const userText =
-				normalized.hints.length > 0 ? `${expandedText}\n\n${normalized.hints.join("\n")}` : expandedText;
-
-			// Build messages only after hooks and image normalization have completed.
-			messages = [];
-			const userContent: (TextContent | ImageContent)[] = [{ type: "text", text: userText }];
-			userContent.push(...normalized.images);
-			messages.push({
-				role: "user",
-				content: userContent,
-				timestamp: Date.now(),
-			});
-
-			for (const msg of result.messages) {
-				messages.push({
-					role: "custom",
-					customType: msg.customType,
-					// Untyped extensions can pass null/missing content; normalize at ingestion.
-					content: msg.content ?? [],
-					display: msg.display,
-					details: msg.details,
-					timestamp: Date.now(),
-				});
-			}
-			nextSystemPromptOptions = result.systemPromptOptions;
-		} catch (error) {
-			preflightResult?.(false);
-			throw error;
 		}
 
-		if (!messages) return;
+		if (this._compactionAbortController !== undefined) {
+			throw new Error(
+				"Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.",
+			);
+		}
+
+		const processedInput = await this._runInputHandlers(
+			text,
+			options?.images,
+			options?.source ?? "interactive",
+			this.isStreaming ? options?.streamingBehavior : undefined,
+		);
+		if (!processedInput) {
+			preflightResult?.("handled");
+			return;
+		}
+		const { text: currentText, images: currentImages } = processedInput;
+
+		// Expand skill commands (/skill:name args) and prompt templates (/template args)
+		let expandedText = currentText;
+		if (expandPromptTemplates) {
+			expandedText = this._expandSkillCommand(expandedText);
+			expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
+		}
+
+		// If streaming, queue via steer() or followUp() based on option
+		if (this.isStreaming) {
+			if (!options?.streamingBehavior) {
+				throw new Error(
+					"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
+				);
+			}
+			if (options.streamingBehavior === "followUp") {
+				await this._queueFollowUp(expandedText, currentImages);
+			} else {
+				await this._queueSteer(expandedText, currentImages);
+			}
+			preflightResult?.("queued");
+			return;
+		}
+
+		// Flush any pending bash and custom messages before the new prompt
+		this._flushPendingBashMessages();
+		this._flushPendingCustomMessages();
+
+		// Validate model
+		if (!this.model) {
+			throw new Error(formatNoModelSelectedMessage());
+		}
+
+		const hasConfiguredAuth =
+			this._modelRuntime.hasConfiguredAuth(this.model.provider) ||
+			(await this._modelRuntime.checkAuth(this.model.provider)) !== undefined;
+		if (!hasConfiguredAuth) {
+			const isOAuth = this._modelRuntime.isUsingOAuth(this.model.provider);
+			if (isOAuth) {
+				throw new Error(
+					`Authentication failed for "${this.model.provider}". ` +
+						`Credentials may have expired or network is unavailable. ` +
+						`Run '/login ${this.model.provider}' to re-authenticate.`,
+				);
+			}
+			throw new Error(formatNoApiKeyFoundMessage(this.model.provider));
+		}
+
+		// Check if we need to compact before sending (catches aborted responses).
+		// The user's new prompt is sent below, so do not call agent.continue() here.
+		const lastAssistant = this._findLastAssistantMessage();
+		if (lastAssistant) {
+			await this._checkCompaction(lastAssistant, false);
+		}
+
+		// Emit before_agent_start before normalizing images so extension-driven model
+		// selection determines the resize profile used for the request and history.
+		const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;
+		const result = await this._extensionRunner.emitBeforeAgentStart(
+			expandedText,
+			currentImages,
+			this._baseSystemPromptOptions,
+		);
+		// Handlers may edit event.systemPromptOptions.selectedTools or call setActiveTools(),
+		// which updates the live loadout instead. An explicit edit wins; otherwise the live
+		// loadout is authoritative, so a setActiveTools() call is not undone here.
+		const handlerEditedTools =
+			result.systemPromptOptions.selectedTools.length !== selectedToolsBefore.length ||
+			result.systemPromptOptions.selectedTools.some((name, index) => name !== selectedToolsBefore[index]);
+		if (!handlerEditedTools) result.systemPromptOptions.selectedTools = this.getActiveToolNames();
+
+		const normalized = await this._normalizePromptImages(currentImages);
+		const userText = normalized.hints.length > 0 ? `${expandedText}\n\n${normalized.hints.join("\n")}` : expandedText;
+
+		// Build messages only after hooks and image normalization have completed.
+		const messages: AgentMessage[] = [];
+		const userContent: (TextContent | ImageContent)[] = [{ type: "text", text: userText }];
+		userContent.push(...normalized.images);
+		messages.push({
+			role: "user",
+			content: userContent,
+			timestamp: Date.now(),
+		});
+
+		for (const msg of result.messages) {
+			messages.push({
+				role: "custom",
+				customType: msg.customType,
+				// Untyped extensions can pass null/missing content; normalize at ingestion.
+				content: msg.content ?? [],
+				display: msg.display,
+				details: msg.details,
+				timestamp: Date.now(),
+			});
+		}
+		const nextSystemPromptOptions = result.systemPromptOptions;
 
 		if (this._pauseState !== "unpaused") {
 			await this._waitForPauseBoundary();
 		}
-		if (operationGeneration !== this._pauseCancellationGeneration) {
-			preflightResult?.(false);
-			return;
-		}
+		if (operationGeneration !== this._pauseCancellationGeneration) return;
 
 		// Recheck after asynchronous preflight before consuming queued context or
 		// admitting the provider run.
@@ -2186,7 +2173,7 @@ export class AgentSession {
 		}
 		if (operationGeneration !== this._pauseCancellationGeneration) return;
 
-		const updateMessage = this._preparePromptAndToolLoadout(nextSystemPromptOptions!);
+		const updateMessage = this._preparePromptAndToolLoadout(nextSystemPromptOptions);
 		this._runSystemPromptOptions = nextSystemPromptOptions;
 		if (updateMessage) messages.unshift(updateMessage);
 
