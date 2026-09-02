@@ -1176,6 +1176,9 @@ export class AgentSession {
 			this._systemPromptOverride = undefined;
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
+			if (this._pauseState === "pausing") {
+				this._setPauseState("paused");
+			}
 			await this._emitAgentSettled();
 		}
 	}
@@ -2752,6 +2755,7 @@ export class AgentSession {
 						this._emit({ type: "entry_appended", entry });
 					}
 				},
+				getPauseState: () => this.pauseState,
 				requestPause: () => this.requestPause(),
 				resume: () => this.resume(),
 				setSessionName: (name) => {

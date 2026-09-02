@@ -87,11 +87,36 @@ describe("AgentSession queue characterization", () => {
 		});
 		harnesses.push(harness);
 
+		expect(extensionApi?.getPauseState()).toBe("unpaused");
 		extensionApi?.requestPause();
-		expect(harness.session.pauseState).toBe("paused");
+		expect(extensionApi?.getPauseState()).toBe("paused");
 
 		extensionApi?.resume();
-		expect(harness.session.pauseState).toBe("unpaused");
+		expect(extensionApi?.getPauseState()).toBe("unpaused");
+	});
+
+	it("completes a pending pause when an active agent run throws", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		let rejectPrompt: ((error: Error) => void) | undefined;
+		const agentPrompt = vi.spyOn(harness.session.agent, "prompt").mockImplementation(
+			() =>
+				new Promise<void>((_resolve, reject) => {
+					rejectPrompt = reject;
+				}),
+		);
+
+		const promptPromise = harness.session.prompt("start");
+		const rejection = expect(promptPromise).rejects.toThrow("provider failed unexpectedly");
+		await vi.waitFor(() => expect(agentPrompt).toHaveBeenCalledOnce());
+
+		harness.session.requestPause();
+		expect(harness.session.pauseState).toBe("pausing");
+		rejectPrompt?.(new Error("provider failed unexpectedly"));
+		await rejection;
+
+		expect(harness.session.pauseState).toBe("paused");
+		expect(harness.session.isStreaming).toBe(false);
 	});
 
 	it("dispatches extension commands immediately when prompted while idle", async () => {

@@ -1512,6 +1512,16 @@ pi.on("session_start", async (_event, ctx) => {
 });
 ```
 
+### pi.getPauseState()
+
+Return the current cooperative pause state: `"unpaused"`, `"pausing"`, or `"paused"`.
+
+```typescript
+if (pi.getPauseState() === "paused") {
+  pi.resume();
+}
+```
+
 ### pi.requestPause()
 
 Request a cooperative pause. Pi finishes already-admitted work, including the current provider response, its complete tool batch, and automatic work that has passed the completed-turn boundary, then parks the live agent loop before admitting another turn.
