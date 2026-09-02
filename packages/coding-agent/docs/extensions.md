@@ -1937,6 +1937,27 @@ Typical `sourceInfo` values:
 
 `pi.setActiveTools()` ignores unknown and `hidden` tools. Tools with `codemode` or `deferred` exposure stay callable from codemode scripts whether active or not.
 
+### pi.getPauseState() / pi.requestPause() / pi.resume()
+
+<a id="pigetpausestate"></a>
+<a id="pirequestpause"></a>
+<a id="piresume"></a>
+
+`pi.getPauseState(): PauseState` returns `"unpaused"`, `"pausing"`, or `"paused"`.
+`pi.requestPause(): void` requests a cooperative pause and returns immediately. Pi finishes already-admitted work, including the current provider response, its complete tool batch, and automatic work that has passed the completed-turn boundary, then parks before admitting another turn. An idle session pauses immediately.
+`pi.resume(): void` releases a parked run or cancels a pending pause; it has no effect when already unpaused.
+
+```typescript
+pi.registerCommand("pause", {
+  handler: async () => { pi.requestPause(); },
+});
+pi.registerCommand("resume", {
+  handler: async () => { pi.resume(); },
+});
+```
+
+Pause state is process-local and is not restored with the session. While paused, prompt-like work is blocked, but manual session controls retain their existing behavior. A parked active run is not idle: do not wait for idle before calling `pi.resume()`.
+
 ### pi.setModel(model)
 
 Set the model for the current session. The change is recorded in session history and restored when that session is resumed, but it does not change the configured `defaultProvider` or `defaultModel` used by new sessions. Returns `false` if authentication is not configured for the model's provider. See [models.md](models.md) for configuring custom models.

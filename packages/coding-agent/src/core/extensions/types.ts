@@ -58,6 +58,7 @@ import type {
 } from "@earendil-works/pi-tui";
 import type { Static, TSchema } from "typebox";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
+import type { PauseState } from "../agent-session.ts";
 import type { BashResult } from "../bash-executor.ts";
 import type { CacheWarmingDecisionEvent, CacheWarmingDecisionEventResult } from "../cache-warmer.ts";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.ts";
@@ -1800,6 +1801,15 @@ export interface ExtensionAPI {
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
 	appendEntry<T = unknown>(customType: string, data?: T): void;
 
+	/** Get the current cooperative pause state. */
+	getPauseState(): PauseState;
+
+	/** Request a cooperative pause after the current complete agent turn. */
+	requestPause(): void;
+
+	/** Resume a cooperatively paused agent session. */
+	resume(): void;
+
 	// =========================================================================
 	// Session Metadata
 	// =========================================================================
@@ -2244,6 +2254,9 @@ export interface ExtensionActions {
 	sendMessage: SendMessageHandler;
 	sendUserMessage: SendUserMessageHandler;
 	appendEntry: AppendEntryHandler;
+	getPauseState: () => PauseState;
+	requestPause: () => void;
+	resume: () => void;
 	setSessionName: SetSessionNameHandler;
 	getSessionName: GetSessionNameHandler;
 	setLabel: SetLabelHandler;
