@@ -13,12 +13,9 @@ import { stripBom } from "./utils/text.ts";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-/**
- * Detect if we're running as a Bun compiled binary.
- * Bun binaries have import.meta.url containing "$bunfs", "~BUN", or "%7EBUN" (Bun's virtual filesystem path)
- */
-export const isBunBinary =
-	import.meta.url.includes("$bunfs") || import.meta.url.includes("~BUN") || import.meta.url.includes("%7EBUN");
+/** Set by scripts/build-coding-agent-binary.mjs; module URLs are not a build identity. */
+declare const PI_BUNDLED_BUN: boolean;
+export const isBunBinary = typeof PI_BUNDLED_BUN !== "undefined" && PI_BUNDLED_BUN;
 
 /** Detect if Bun is the runtime (compiled binary or bun run) */
 export const isBunRuntime = !!process.versions.bun;

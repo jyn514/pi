@@ -75,6 +75,23 @@ cd "pi-${VERSION}"
 
 The archive includes release model data and native prebuilds. `--offline-model-data` uses that model data without refreshing provider catalogs. The script installs dependencies and builds the executable with its runtime assets; pass `--skip-install` if dependencies are already provided.
 
+If a container or package build already prepares the workspace and copies runtime assets, compile only the executable with:
+
+```bash
+node scripts/build-coding-agent-binary.mjs --outfile packages/coding-agent/dist/pi
+```
+
+The driver requires built workspace packages and Bun (tested with 1.3.14). It embeds bytecode and the image worker, sets standalone build identity, and rejects bytecode generation failures even when Bun exits zero. Pass `--target bun-linux-x64-baseline` to cross-compile; output paths are relative to your working directory.
+
+Copy runtime assets and smoke-test the native binary outside the checkout:
+
+```bash
+npm --prefix packages/coding-agent run copy-binary-assets
+PI_TEST_BINARY="$PWD/packages/coding-agent/dist/pi" node --test scripts/coding-agent-binary.test.mjs
+```
+
+The smoke test checks extension imports, assets, RPC startup, and the embedded image worker. Cross-compiled binaries need this test on their target platform.
+
 ## Supply-chain hardening
 
 We treat npm dependency changes as reviewed code changes.
