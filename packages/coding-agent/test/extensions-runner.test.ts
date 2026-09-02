@@ -83,6 +83,7 @@ describe("ExtensionRunner", () => {
 		sendMessage: () => {},
 		sendUserMessage: () => {},
 		appendEntry: () => {},
+		getPauseState: () => "unpaused",
 		requestPause: () => {},
 		resume: () => {},
 		setSessionName: () => {},
