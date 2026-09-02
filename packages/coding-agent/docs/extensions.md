@@ -79,6 +79,7 @@ Automatic retries, recovery, compaction, or queued work can continue afterward.
 | Send user or custom messages | `pi.sendUserMessage()` or `pi.sendMessage()` |
 | Persist non-context session data | `pi.appendEntry()` |
 | Change active tools, model, or thinking level | Session control methods on `pi` |
+| Pause or resume automatic work | `pi.requestPause()`, `pi.resume()`, `pi.getPauseState()` |
 | Add a model provider | `pi.registerProvider()` |
 | Add an MCP server | `pi.registerMcpServer()` |
 | Route each request to a model | [`pi.registerVirtualModel()`](virtual-models.md) |
@@ -215,6 +216,25 @@ Command handlers receive `ExtensionCommandContext`, which adds operations for wa
 These operations are command-only because calling them from lifecycle handlers can deadlock the runtime.
 
 Session replacement invalidates the old context. Capture only plain data before switching, then use the fresh context supplied to `withSession` for session-bound work.
+
+<a id="pigetpausestate"></a>
+<a id="pirequestpause"></a>
+<a id="piresume"></a>
+
+`pi.getPauseState(): PauseState` returns `"unpaused"`, `"pausing"`, or `"paused"`.
+`pi.requestPause(): void` requests a cooperative pause and returns immediately. Pi finishes already-admitted work, including the current provider response, its complete tool batch, and automatic work that has passed the completed-turn boundary, then parks before admitting another turn. An idle session pauses immediately.
+`pi.resume(): void` releases a parked run or cancels a pending pause; it has no effect when already unpaused.
+
+```typescript
+pi.registerCommand("pause", {
+  handler: async () => { pi.requestPause(); },
+});
+pi.registerCommand("resume", {
+  handler: async () => { pi.resume(); },
+});
+```
+
+Pause state is process-local and is not restored with the session. While paused, prompt-like work is blocked, but manual session controls retain their existing behavior. A parked active run is not idle: do not wait for idle before calling `pi.resume()`.
 
 <a id="state-management"></a>
 <a id="persist-state"></a>

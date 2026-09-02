@@ -149,6 +149,8 @@ The detailed references formerly on this page now have dedicated pages. These an
 <a id="steer"></a>
 <a id="follow_up"></a>
 <a id="abort"></a>
+<a id="pause"></a>
+<a id="resume"></a>
 <a id="clear_queue"></a>
 <a id="new_session"></a>
 <a id="get_state"></a>

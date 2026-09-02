@@ -104,6 +104,34 @@ Response:
 {"type": "response", "command": "abort", "success": true}
 ```
 
+### pause
+
+Request a cooperative pause after the current complete turn. The response acknowledges the request immediately; use `pause_state_changed` or `get_state.pauseState` to observe when the session reaches the pause boundary.
+
+```json
+{"type": "pause"}
+```
+
+Response:
+```json
+{"type": "response", "command": "pause", "success": true}
+```
+
+A pause does not interrupt a provider response or its tool batch. While paused, new prompts, steering, and follow-up messages are rejected; resume the session to continue.
+
+### resume
+
+Resume a paused session. The response acknowledges the request immediately.
+
+```json
+{"type": "resume"}
+```
+
+Response:
+```json
+{"type": "response", "command": "resume", "success": true}
+```
+
 ### clear_queue
 
 Remove queued steering and follow-up messages and return their text.
@@ -171,6 +199,7 @@ Response:
     "thinkingLevel": "medium",
     "isStreaming": false,
     "isCompacting": false,
+    "pauseState": "unpaused",
     "steeringMode": "all",
     "followUpMode": "one-at-a-time",
     "sessionFile": "/path/to/session.jsonl",
@@ -183,7 +212,7 @@ Response:
 }
 ```
 
-The `model` field is a full [Model](#model-object) object, or omitted when no model is selected. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set.
+The `model` field is a full [Model](#model-object) object, or omitted when no model is selected. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set. `pauseState` is `"unpaused"`, `"pausing"`, or `"paused"`; it is independent of `isStreaming`, which remains true while an active run is parked.
 
 ### get_messages
 
