@@ -4,13 +4,12 @@
  */
 
 import * as fs from "node:fs";
-import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Provider } from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
 import type { createJiti } from "jiti";
-import { CONFIG_DIR_NAME, getAgentDir, isBunBinary, isBundledNode } from "../../config.ts";
+import { CONFIG_DIR_NAME, getAgentDir } from "../../config.ts";
 import { resolvePath } from "../../utils/paths.ts";
 import type { PauseState } from "../agent-session.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
@@ -20,6 +19,7 @@ import { type McpServerConfig, McpServerRegistry, mcpNamespace, validateMcpServe
 import { readPiManifest } from "../pi-manifest.ts";
 import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
 import { time } from "../timings.ts";
+import { getAliases } from "./aliases.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import type {
 	EntryRenderer,
@@ -37,13 +37,15 @@ import type {
 	ToolRendererResolver,
 } from "./types.ts";
 
-const require = createRequire(import.meta.url);
-
 const isNodeSeaBinary =
 	("sea" in process.features && process.features.sea === true) ||
 	process.getBuiltinModule("node:sea")?.isSea() === true;
-const isTypeScriptSourceRuntime = !isBunBinary && path.extname(fileURLToPath(import.meta.url)) === ".ts";
-const usesEmbeddedModules = isBunBinary || isNodeSeaBinary || isBundledNode;
+declare const PI_BUNDLED_NODE: boolean;
+declare const PI_BUNDLED_BUN: boolean;
+const isBundledNode = typeof PI_BUNDLED_NODE !== "undefined" && PI_BUNDLED_NODE;
+const isTypeScriptSourceRuntime = path.extname(fileURLToPath(import.meta.url)) === ".ts";
+const usesEmbeddedModules =
+	(typeof PI_BUNDLED_BUN !== "undefined" && PI_BUNDLED_BUN) || isNodeSeaBinary || isBundledNode;
 
 let createJitiPromise: Promise<typeof createJiti> | undefined;
 
@@ -59,70 +61,6 @@ let virtualModulesPromise: Promise<Record<string, unknown>> | undefined;
 function getVirtualModules(): Promise<Record<string, unknown>> {
 	virtualModulesPromise ??= import("./virtual-modules.ts").then((module) => module.VIRTUAL_MODULES);
 	return virtualModulesPromise;
-}
-
-/**
- * Get aliases for jiti (used in built Node.js mode).
- * In compiled binary mode, virtualModules is used instead.
- */
-let _aliases: Record<string, string> | null = null;
-
-function getAliases(): Record<string, string> {
-	if (_aliases) return _aliases;
-
-	const __dirname = path.dirname(fileURLToPath(import.meta.url));
-	const packageIndex = path.resolve(__dirname, "../..", "index.js");
-
-	const typeboxEntry = require.resolve("typebox");
-	const typeboxCompileEntry = require.resolve("typebox/compile");
-	const typeboxValueEntry = require.resolve("typebox/value");
-
-	const packagesRoot = path.resolve(__dirname, "../../../../");
-	const resolveWorkspaceOrImport = (workspaceRelativePath: string, specifier: string): string => {
-		const workspacePath = path.join(packagesRoot, workspaceRelativePath);
-		if (fs.existsSync(workspacePath)) {
-			return workspacePath;
-		}
-		return fileURLToPath(import.meta.resolve(specifier));
-	};
-
-	const piCodingAgentEntry = packageIndex;
-	const piAgentCoreEntry = resolveWorkspaceOrImport("agent/dist/index.js", "@earendil-works/pi-agent-core");
-	const piTuiEntry = resolveWorkspaceOrImport("tui/dist/index.js", "@earendil-works/pi-tui");
-	// Extensions resolve the pi-ai root to the compat entrypoint (a strict
-	// superset of the core entrypoint): existing extensions using the old
-	// global API keep working at runtime until compat is removed.
-	const piAiCompatEntry = resolveWorkspaceOrImport("ai/dist/compat.js", "@earendil-works/pi-ai/compat");
-	const piAiOauthEntry = resolveWorkspaceOrImport("ai/dist/oauth.js", "@earendil-works/pi-ai/oauth");
-	const piAiProvidersEntry = resolveWorkspaceOrImport(
-		"ai/dist/providers/all.js",
-		"@earendil-works/pi-ai/providers/all",
-	);
-
-	_aliases = {
-		"@earendil-works/pi-coding-agent": piCodingAgentEntry,
-		"@earendil-works/pi-agent-core": piAgentCoreEntry,
-		"@earendil-works/pi-tui": piTuiEntry,
-		"@earendil-works/pi-ai/providers/all": piAiProvidersEntry,
-		"@earendil-works/pi-ai/compat": piAiCompatEntry,
-		"@earendil-works/pi-ai/oauth": piAiOauthEntry,
-		"@earendil-works/pi-ai": piAiCompatEntry,
-		"@mariozechner/pi-coding-agent": piCodingAgentEntry,
-		"@mariozechner/pi-agent-core": piAgentCoreEntry,
-		"@mariozechner/pi-tui": piTuiEntry,
-		"@mariozechner/pi-ai/providers/all": piAiProvidersEntry,
-		"@mariozechner/pi-ai/compat": piAiCompatEntry,
-		"@mariozechner/pi-ai/oauth": piAiOauthEntry,
-		"@mariozechner/pi-ai": piAiCompatEntry,
-		typebox: typeboxEntry,
-		"typebox/compile": typeboxCompileEntry,
-		"typebox/value": typeboxValueEntry,
-		"@sinclair/typebox": typeboxEntry,
-		"@sinclair/typebox/compile": typeboxCompileEntry,
-		"@sinclair/typebox/value": typeboxValueEntry,
-	};
-
-	return _aliases;
 }
 
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
