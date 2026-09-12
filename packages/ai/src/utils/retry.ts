@@ -21,6 +21,9 @@ const NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN = buildProviderErrorPattern([
 	"out of budget",
 	"quota exceeded",
 	"billing",
+	"usage_limit_reached",
+	"usage_not_included",
+	"hit your ChatGPT usage limit",
 ]);
 
 const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
@@ -55,6 +58,12 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"getaddrinfo",
 	"ENOTFOUND",
 	"EAI_AGAIN",
+	"name does not resolve",
+	"bad[ _]record[ _]mac",
+	"ECONNRESET",
+	"ECONNREFUSED",
+	"ENETUNREACH",
+	"EHOSTUNREACH",
 	"upstream.?connect",
 	"reset before headers",
 	"socket hang up",
@@ -90,7 +99,7 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 ]);
 
 /**
- * Retry policy: bounded attempts with exponential backoff (`baseDelayMs * 2^(attempt-1)`).
+ * Retry policy: bounded attempts with exponential backoff (`baseDelayMs * 2^(attempt-1)`, capped at 15s).
  * Matches `settings.retry` (`enabled`, `maxRetries`, `baseDelayMs`) in coding-agent; kept
  * here so the classifier and the policy-driven retry loop live together and stay reusable
  * by the SDK and other callers.
@@ -99,7 +108,7 @@ export interface RetryPolicy {
 	enabled: boolean;
 	/** Max retry attempts (0 = no retries). The initial call never counts as a retry. */
 	maxRetries: number;
-	/** Base delay in ms. Per-attempt delay is `baseDelayMs * 2^(attempt-1)` before jitter. */
+	/** Base delay in ms. Per-attempt delay is `baseDelayMs * 2^(attempt-1)` capped at 15000ms. */
 	baseDelayMs: number;
 }
 
@@ -130,15 +139,15 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 			reject(new RetrySleepAbortError());
 			return;
 		}
-		const timeout = setTimeout(resolve, ms);
-		signal?.addEventListener(
-			"abort",
-			() => {
-				clearTimeout(timeout);
-				reject(new RetrySleepAbortError());
-			},
-			{ once: true },
-		);
+		const abort = () => {
+			clearTimeout(timeout);
+			reject(new RetrySleepAbortError());
+		};
+		const timeout = setTimeout(() => {
+			signal?.removeEventListener("abort", abort);
+			resolve();
+		}, ms);
+		signal?.addEventListener("abort", abort, { once: true });
 	});
 }
 
@@ -193,7 +202,7 @@ export async function retryAssistantCall(
 
 		attempt++;
 		lastRetry = { attempt, errorMessage: response.errorMessage || "Unknown error" };
-		const delayMs = policy!.baseDelayMs * 2 ** (attempt - 1);
+		const delayMs = Math.min(15_000, policy!.baseDelayMs * 2 ** (attempt - 1));
 		await callbacks?.onRetryScheduled?.(attempt, maxAttempts, delayMs, lastRetry.errorMessage);
 
 		// Normalize aborts during retry backoff to the same AssistantMessage shape as
@@ -221,8 +230,20 @@ export async function retryAssistantCall(
  * before restarting the assistant turn.
  */
 export function isRetryableAssistantError(message: AssistantMessage): boolean {
-	if (message.stopReason !== "error" || !message.errorMessage) return false;
-	const errorMessage = message.errorMessage;
-	if (NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN.test(errorMessage)) return false;
+	return message.stopReason === "error" && isRetryableErrorMessage(message.errorMessage ?? "");
+}
+
+/** Shared by the Codex transport and outer retries, which receive formatted errors. */
+export function isRetryableErrorMessage(errorMessage: string): boolean {
+	for (const [, status] of errorMessage.matchAll(/(?:^|: )Codex \((\d{3})\):/g)) {
+		if (Number(status) >= 400 && Number(status) < 500 && !["408", "409", "429"].includes(status)) return false;
+	}
+	if (
+		NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN.test(errorMessage) ||
+		/CERT_HAS_EXPIRED|CERT_NOT_YET_VALID|ERR_TLS_CERT_ALTNAME_INVALID|UNABLE_TO_VERIFY_LEAF_SIGNATURE|UNABLE_TO_GET_ISSUER_CERT|SELF_SIGNED_CERT|CERTIFICATE_VERIFY_FAILED|certificate[ _]verify[ _]failed|certificate has expired|self.signed certificate/i.test(
+			errorMessage,
+		)
+	)
+		return false;
 	return RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage);
 }

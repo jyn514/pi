@@ -3067,7 +3067,7 @@ export class AgentSession {
 			return false;
 		}
 
-		const delayMs = settings.baseDelayMs * 2 ** (this._retryAttempt - 1);
+		const delayMs = Math.min(15_000, settings.baseDelayMs * 2 ** (this._retryAttempt - 1));
 
 		this._emit({
 			type: "auto_retry_start",
