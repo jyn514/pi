@@ -175,7 +175,7 @@ See [compaction.md](compaction.md) for trigger and summarization behavior.
 |---------|------|---------|-------------|
 | `retry.enabled` | boolean | `true` | Enable automatic agent-level retry on transient errors |
 | `retry.maxRetries` | number | `3` | Maximum agent-level retry attempts |
-| `retry.baseDelayMs` | number | `2000` | Base delay for agent-level exponential backoff (2s, 4s, 8s) |
+| `retry.baseDelayMs` | number | `2000` | Base delay for agent-level exponential backoff (2s, 4s, 8s, then capped at 15s) |
 | `retry.maxAgentDelayMs` | number | `60000` | Max agent-level retry delay (60s) |
 | `retry.provider.timeoutMs` | number | SDK default | Provider/SDK request timeout in milliseconds |
 | `retry.provider.maxRetries` | number | `0` | Provider/SDK retry attempts |
@@ -183,6 +183,7 @@ See [compaction.md](compaction.md) for trigger and summarization behavior.
 
 Agent-level retries use exponential backoff capped by `retry.maxAgentDelayMs`, so long retry runs stay responsive after prolonged outages.
 
+For multi-minute network outages, set `retry.maxRetries` to `20` to allow about 4½ minutes of backoff for transient failures, including DNS lookup failures and TLS `bad record mac` errors. Request time adds to this duration. These settings also govern compaction and branch summaries. Recognized Codex authentication, quota, and certificate-validation failures stop immediately.
 When a provider requests a retry delay longer than `retry.provider.maxRetryDelayMs`, the request fails immediately with an informative error instead of waiting silently. Set it to `0` to disable the limit.
 
 Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explicitly needed. Setting it above `0` can make SDK/provider retries handle out-of-usage-limit errors before Pi sees them, which may block the agent until the provider quota resets in some circumstances.
