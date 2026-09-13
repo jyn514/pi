@@ -67,6 +67,18 @@ describe("session network recovery", () => {
 		},
 	);
 
+	it("honors cancellation from the retry-start callback before sleeping", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		harness.setResponses([networkError(), fauxAssistantMessage("must not run")]);
+		harness.session.subscribe((event) => {
+			if (event.type === "auto_retry_start") harness.session.abortRetry();
+		});
+		await harness.session.prompt("test");
+		expect(harness.faux.state.callCount).toBe(1);
+		expect(harness.eventsOfType("auto_retry_end")).toMatchObject([{ success: false, finalError: "Retry cancelled" }]);
+	});
+
 	it("recovers a compaction summary after three minutes", async () => {
 		const harness = await createHarness({
 			settings: { retry: { maxRetries: 20 }, compaction: { keepRecentTokens: 1 } },
@@ -88,6 +100,22 @@ describe("session network recovery", () => {
 		expect(harness.eventsOfType("summarization_retry_scheduled").length).toBeGreaterThan(3);
 	});
 
+	it("cancels recovery while paused without waiting for resume", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		vi.useFakeTimers();
+		harness.setResponses([networkError(), fauxAssistantMessage("must not run")]);
+		harness.session.subscribe((event) => {
+			if (event.type === "auto_retry_start") harness.session.requestPause();
+		});
+		const prompt = harness.session.prompt("test");
+		await vi.advanceTimersByTimeAsync(2000);
+		harness.session.abortRetry();
+		await prompt;
+		expect(harness.faux.state.callCount).toBe(1);
+		expect(harness.session.isRetrying).toBe(false);
+	});
+
 	it("keeps simultaneous session budgets independent", async () => {
 		const first = await createHarness({ settings: { retry: { maxRetries: 1 } } });
 		const second = await createHarness({ settings: { retry: { maxRetries: 20 } } });
@@ -106,6 +134,28 @@ describe("session network recovery", () => {
 		expect(first.faux.state.callCount).toBe(2);
 		expect(first.eventsOfType("auto_retry_end")).toMatchObject([{ success: false }]);
 		expect(second.session.getLastAssistantText()).toBe("recovered");
+	});
+
+	it("cancels a retried request and reports failure once", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		vi.useFakeTimers();
+		harness.setResponses([
+			networkError(),
+			async (_context, options) => {
+				await new Promise<void>((resolve) =>
+					options?.signal?.addEventListener("abort", () => resolve(), { once: true }),
+				);
+				return fauxAssistantMessage("", { stopReason: "aborted" });
+			},
+		]);
+		const prompt = harness.session.prompt("test");
+		await vi.advanceTimersByTimeAsync(2000);
+		expect(harness.faux.state.callCount).toBe(2);
+		await harness.session.abort();
+		await prompt;
+		expect(harness.eventsOfType("auto_retry_end")).toMatchObject([{ success: false, attempt: 1 }]);
+		expect(harness.eventsOfType("auto_retry_end")).toHaveLength(1);
 	});
 
 	it("recovers a branch summary after three minutes", async () => {

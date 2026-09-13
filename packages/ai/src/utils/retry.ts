@@ -232,6 +232,10 @@ export async function retryAssistantCall(
 			throw error;
 		}
 		await callbacks?.onRetryAttemptStart?.();
+		if (signal?.aborted) {
+			await callbacks?.onRetryFinished?.(false, attempt);
+			return { ...response, stopReason: "aborted", errorMessage: undefined };
+		}
 	}
 }
 
