@@ -8,6 +8,7 @@ import {
 	realpathSync,
 	renameSync,
 	rmSync,
+	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -56,28 +57,40 @@ function hasSessionWithId(root: string, sessionId: string): boolean {
 	return false;
 }
 
-async function runCli(args: string[]): Promise<{ code: number | null; agentDir: string }> {
-	const tempRoot = createTempDir();
-	const agentDir = join(tempRoot, "agent");
-	const projectDir = join(tempRoot, "project");
-	mkdirSync(agentDir, { recursive: true });
-	mkdirSync(projectDir, { recursive: true });
+type CliDirs = { agentDir: string; projectDir: string; sessionDir: string };
 
+async function runCli(
+	argsOrBuilder: string[] | ((dirs: CliDirs) => string[]),
+	setup?: (dirs: CliDirs) => void,
+): Promise<{ code: number | null; agentDir: string; stderr: string }> {
+	const tempRoot = createTempDir();
+	const dirs = {
+		agentDir: join(tempRoot, "agent"),
+		projectDir: join(tempRoot, "project"),
+		sessionDir: join(tempRoot, "sessions"),
+	};
+	mkdirSync(dirs.agentDir, { recursive: true });
+	mkdirSync(dirs.projectDir, { recursive: true });
+	setup?.(dirs);
+	const args = typeof argsOrBuilder === "function" ? argsOrBuilder(dirs) : argsOrBuilder;
+
+	const stderr: Buffer[] = [];
 	const code = await new Promise<number | null>((resolvePromise, reject) => {
 		const child = spawn(process.execPath, ["--import", sourceResolverPath, cliPath, ...args], {
-			cwd: projectDir,
+			cwd: dirs.projectDir,
 			env: {
 				...process.env,
-				[ENV_AGENT_DIR]: agentDir,
+				[ENV_AGENT_DIR]: dirs.agentDir,
 				PI_OFFLINE: "1",
 			},
-			stdio: ["ignore", "ignore", "ignore"],
+			stdio: ["ignore", "ignore", "pipe"],
 		});
+		child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
 		child.on("error", reject);
 		child.on("close", resolvePromise);
 	});
 
-	return { code, agentDir };
+	return { code, agentDir: dirs.agentDir, stderr: Buffer.concat(stderr).toString("utf8") };
 }
 
 function args(overrides: Partial<Args>): Args {
@@ -226,6 +239,16 @@ describe("--session-id", () => {
 			throw new Error(`exit:${code}`);
 		});
 
+		await expect(
+			createSessionManager(
+				args({ fork: "source-id", sessionId: "existing-id" }),
+				projectDir,
+				sessionDir,
+				SettingsManager.inMemory(),
+			),
+		).rejects.toThrow("exit:1");
+	});
+
 	it("does not warn when quiet startup creates a session for a missing --session-id", async () => {
 		const result = await runCli(
 			(dirs) => [
@@ -261,17 +284,32 @@ describe("--session-id", () => {
 			],
 			(dirs) => {
 				mkdirSync(dirs.sessionDir, { recursive: true });
-				writeSession(dirs.sessionDir, dirs.projectDir, "existing-session-id");
+				persistSession(
+					SessionManager.create(dirs.projectDir, dirs.sessionDir, { id: "existing-session-id" }),
+					"existing",
+				);
 			},
 		);
 
-		await expect(
-			createSessionManager(
-				args({ fork: "source-id", sessionId: "existing-id" }),
-				projectDir,
-				sessionDir,
-				SettingsManager.inMemory(),
-			),
-		).rejects.toThrow("exit:1");
+		expect(result.code).toBe(1);
+		expect(result.stderr).not.toContain("No project session found with id 'existing-session-id'");
+	});
+
+	it("manager does not warn when quiet startup creates a session for a missing --session-id", async () => {
+		const tempRoot = createTempDir();
+		const projectDir = join(tempRoot, "project");
+		const sessionDir = join(tempRoot, "sessions");
+		mkdirSync(projectDir, { recursive: true });
+		const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		const created = await createSessionManager(
+			args({ sessionId: "quiet-missing-session-id" }),
+			projectDir,
+			sessionDir,
+			SettingsManager.inMemory({ quietStartup: true }),
+		);
+
+		expect(created.getSessionId()).toBe("quiet-missing-session-id");
+		expect(consoleError).not.toHaveBeenCalled();
 	});
 });
