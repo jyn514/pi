@@ -1198,7 +1198,7 @@ export class AgentSession {
 				if (assistantMsg.stopReason !== "error" && this._retryAttempt > 0) {
 					this._emit({
 						type: "auto_retry_end",
-						success: true,
+						success: assistantMsg.stopReason !== "aborted",
 						attempt: this._retryAttempt,
 					});
 					this._retryAttempt = 0;
@@ -1874,6 +1874,7 @@ export class AgentSession {
 				if (operationGeneration !== this._pauseCancellationGeneration || this._agentRunAbortRequested) break;
 
 				const postRunContinuation = await this._handlePostAgentRun();
+				if (!postRunContinuation) break;
 
 				if (this._pauseState !== "unpaused") {
 					await this._waitForPauseBoundary();
@@ -2521,12 +2522,29 @@ export class AgentSession {
 		this._releasePauseWaiter();
 	}
 
-	private async _waitForPauseBoundary(): Promise<void> {
+	private async _waitForPauseBoundary(signal?: AbortSignal): Promise<void> {
 		while (this._pauseState !== "unpaused") {
+			if (signal?.aborted) return;
 			if (this._pauseState === "pausing") {
 				this._setPauseState("paused");
 			}
-			await this._waitWhilePaused();
+			const paused = this._waitWhilePaused();
+			if (!signal) {
+				await paused;
+				continue;
+			}
+			await new Promise<void>((resolve) => {
+				const onAbort = () => {
+					signal.removeEventListener("abort", onAbort);
+					resolve();
+				};
+				signal.addEventListener("abort", onAbort, { once: true });
+				if (signal.aborted) onAbort();
+				void paused.then(() => {
+					signal.removeEventListener("abort", onAbort);
+					resolve();
+				});
+			});
 		}
 	}
 
@@ -3940,6 +3958,7 @@ export class AgentSession {
 
 		const delayMs = retryDelayMs(settings, this._retryAttempt);
 
+		this._retryAbortController = new AbortController();
 		this._emit({
 			type: "auto_retry_start",
 			attempt: this._retryAttempt,
@@ -3948,13 +3967,11 @@ export class AgentSession {
 			errorMessage: message.errorMessage || "Unknown error",
 		});
 
-		// Keep the failed attempt in raw history while durably omitting it from model projection.
-		this._omitRecoveryAttempt(message);
-
 		// Wait with exponential backoff (abortable)
-		this._retryAbortController = new AbortController();
 		try {
 			await sleep(delayMs, this._retryAbortController.signal);
+			await this._waitForPauseBoundary(this._retryAbortController.signal);
+			if (this._retryAbortController.signal.aborted) throw new Error("Retry cancelled");
 		} catch {
 			// Aborted during sleep - emit end event so UI can clean up
 			this._finishCancelledRetry();
@@ -3962,6 +3979,9 @@ export class AgentSession {
 		} finally {
 			this._retryAbortController = undefined;
 		}
+
+		// Persist the failed attempt in raw history but omit it from the next model request.
+		this._omitRecoveryAttempt(message);
 
 		return true;
 	}

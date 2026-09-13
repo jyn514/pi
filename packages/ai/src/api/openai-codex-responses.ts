@@ -31,6 +31,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
+import { isRetryableErrorMessage } from "../utils/retry.ts";
 import { getSystemMessageText } from "../utils/text.ts";
 import {
 	getDeclaredTools,
@@ -119,22 +120,6 @@ function assertSuccessfulOutput(output: AssistantMessage): asserts output is Suc
 // ============================================================================
 // Retry Helpers
 // ============================================================================
-
-function isTerminalRateLimitError(errorText: string): boolean {
-	return /GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|available balance|insufficient_quota|out of budget|quota exceeded|billing/i.test(
-		errorText,
-	);
-}
-
-function isRetryableError(status: number, errorText: string): boolean {
-	if (status === 429 && isTerminalRateLimitError(errorText)) {
-		return false;
-	}
-	if (status === 429 || status === 500 || status === 502 || status === 503 || status === 504) {
-		return true;
-	}
-	return /rate.?limit|overloaded|service.?unavailable|upstream.?connect|connection.?refused/i.test(errorText);
-}
 
 function getRetryAfterDelayMs(headers: Headers): number | undefined {
 	const retryAfterMs = headers.get("retry-after-ms");
@@ -421,7 +406,19 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 					}
 
 					const errorText = await response.text();
-					if (attempt < maxRetries && isRetryableError(response.status, errorText)) {
+					const info = await parseErrorResponse(
+						new Response(errorText, {
+							status: response.status,
+							statusText: response.statusText,
+						}),
+					);
+					const httpError = Object.assign(new Error(info.message), {
+						status: response.status,
+						body: errorText,
+						code: info.code,
+						friendlyMessage: info.friendlyMessage,
+					});
+					if (attempt < maxRetries && isRetryableErrorMessage(formatCodexError(httpError))) {
 						const retryAfterDelayMs = getRetryAfterDelayMs(response.headers);
 						const delayMs =
 							retryAfterDelayMs === undefined
@@ -432,13 +429,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 						continue;
 					}
 
-					// Parse error for friendly message on final attempt or non-retryable error
-					const fakeResponse = new Response(errorText, {
-						status: response.status,
-						statusText: response.statusText,
-					});
-					const info = await parseErrorResponse(fakeResponse);
-					throw new Error(info.friendlyMessage || info.message);
+					throw httpError;
 				} catch (error) {
 					if (error instanceof Error) {
 						if (error.name === "AbortError" || error.message === "Request was aborted") {
@@ -450,7 +441,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 					if (
 						attempt < maxRetries &&
 						!(lastError instanceof RetryDelayExceededError) &&
-						!lastError.message.includes("usage limit")
+						isRetryableErrorMessage(formatCodexError(lastError))
 					) {
 						const delayMs = BASE_DELAY_MS * 2 ** attempt;
 						await sleep(delayMs, options?.signal);
@@ -488,7 +479,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				delete (block as { customInput?: unknown }).customInput;
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = formatProviderError(normalizeProviderError(error));
+			output.errorMessage = formatCodexError(error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -1593,10 +1584,30 @@ async function processWebSocketStream(
 // Error Handling
 // ============================================================================
 
-async function parseErrorResponse(response: Response): Promise<{ message: string; friendlyMessage?: string }> {
+function formatCodexError(error: unknown): string {
+	const messages: string[] = [];
+	const seen = new Set<unknown>();
+	while (error !== undefined && !seen.has(error)) {
+		seen.add(error);
+		const normalized = normalizeProviderError(error);
+		if (error instanceof Error && "friendlyMessage" in error && typeof error.friendlyMessage === "string") {
+			normalized.message = error.friendlyMessage;
+			normalized.messageCarriesBody = true;
+		}
+		messages.push(formatProviderError(normalized, normalized.status === undefined ? undefined : "Codex"));
+		if (error instanceof Error && "code" in error && typeof error.code === "string") messages.push(error.code);
+		error = error instanceof Error ? error.cause : undefined;
+	}
+	return messages.join(": ");
+}
+
+async function parseErrorResponse(
+	response: Response,
+): Promise<{ message: string; code?: string; friendlyMessage?: string }> {
 	const raw = await response.text();
 	let message = raw || response.statusText || "Request failed";
 	let friendlyMessage: string | undefined;
+	let code: string | undefined;
 
 	try {
 		const parsed = JSON.parse(raw) as {
@@ -1604,8 +1615,8 @@ async function parseErrorResponse(response: Response): Promise<{ message: string
 		};
 		const err = parsed?.error;
 		if (err) {
-			const code = err.code || err.type || "";
-			if (/usage_limit_reached|usage_not_included|rate_limit_exceeded/i.test(code) || response.status === 429) {
+			code = err.code || err.type || "";
+			if (/usage_limit_reached|usage_not_included/i.test(code)) {
 				const plan = err.plan_type ? ` (${err.plan_type.toLowerCase()} plan)` : "";
 				const mins = err.resets_at
 					? Math.max(0, Math.round((err.resets_at * 1000 - Date.now()) / 60000))
@@ -1613,11 +1624,11 @@ async function parseErrorResponse(response: Response): Promise<{ message: string
 				const when = mins !== undefined ? ` Try again in ~${mins} min.` : "";
 				friendlyMessage = `You have hit your ChatGPT usage limit${plan}.${when}`.trim();
 			}
-			message = err.message || friendlyMessage || message;
+			message = err.message || message;
 		}
 	} catch {}
 
-	return { message, friendlyMessage };
+	return { message, code, friendlyMessage };
 }
 
 // ============================================================================

@@ -131,6 +131,8 @@ See [Themes](themes.md) and [Terminal Setup](terminal-setup.md) for format and p
 | `retry.provider.maxRetries` | number | `0` | Provider-level retry attempts. |
 | `retry.provider.maxRetryDelayMs` | number | `60000` | Maximum server-requested delay in milliseconds. Set to `0` to disable the limit. |
 
+Agent-level retries use exponential backoff capped by `retry.maxAgentDelayMs` (60 seconds by default) and also cover compaction and branch summaries. For example, `retry.maxRetries: 20` with `retry.maxAgentDelayMs: 15000` allows about 4½ minutes of backoff, excluding request time. Transient failures such as DNS resolution errors and TLS `bad record mac` errors are retried; recognized Codex authentication, quota, and certificate-validation errors are not.
+
 Keep `retry.provider.maxRetries` at `0` unless provider-level retries are required. Provider retries can delay Pi from handling quota and usage-limit errors itself.
 
 ## Shell
