@@ -148,6 +148,7 @@ export type {
 	RegisteredTool,
 	ReplacedSessionContext,
 	ResolvedCommand,
+	ResolvedSkillCommand,
 	// Events - Resources
 	ResourcesDiscoverEvent,
 	ResourcesDiscoverResult,

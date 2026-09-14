@@ -1213,6 +1213,22 @@ ctx.sessionManager.buildContextEntries()    // Active branch entries with compac
 ctx.sessionManager.getLeafId()              // Current leaf entry ID
 ```
 
+### ctx.resolveSkillCommand()
+
+`ctx.resolveSkillCommand(text: string): ResolvedSkillCommand | undefined` resolves an exact `/skill:name` command against currently loaded skills without reading or expanding the file.
+It returns `{ skill: Readonly<Skill>, args: string }`, with trimmed arguments, or `undefined` for other input or unknown skills.
+Use it in `input` handlers before skill and prompt-template expansion instead of parsing commands or rediscovering files:
+
+```typescript
+pi.on("input", (event, ctx) => {
+  const invocation = ctx.resolveSkillCommand(event.text);
+  if (!invocation) return;
+
+  ctx.ui.notify(`Routing ${invocation.skill.name}`, "info");
+  return { action: "handled" };
+});
+```
+
 ### ctx.modelRegistry / ctx.model / ctx.thinkingLevel / ctx.scopedModels
 
 Access to models, providers, and resolved authentication. `ctx.modelRegistry.getProvider(id)` returns the effective pi-ai provider, while `getProviderAuth(id)` resolves its current API key, headers, base URL, and provider-scoped environment without requiring a loaded model. `ctx.model` is the active model, and `ctx.thinkingLevel` is its current effective thinking level.
