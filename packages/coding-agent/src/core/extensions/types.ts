@@ -79,6 +79,7 @@ import type {
 	SessionManager,
 } from "../session-manager.ts";
 import type { Settings } from "../settings-manager.ts";
+import type { Skill } from "../skills.ts";
 import type { SlashCommandInfo } from "../slash-commands.ts";
 import type { SourceInfo } from "../source-info.ts";
 import type { BuildSystemPromptOptions, NormalizedBuildSystemPromptOptions } from "../system-prompt.ts";
@@ -318,6 +319,11 @@ export interface CompactOptions {
 	onError?: (error: Error) => void;
 }
 
+export interface ResolvedSkillCommand {
+	skill: Readonly<Skill>;
+	args: string;
+}
+
 /**
  * Context passed to extension event handlers.
  */
@@ -363,6 +369,8 @@ export interface ExtensionContext {
 	compact(options?: CompactOptions): void;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
+	/** Resolve an exact `/skill:name` command against the currently loaded skills. */
+	resolveSkillCommand(text: string): ResolvedSkillCommand | undefined;
 }
 
 /** Options for {@link ExtensionToolContext.executeTool}. */
@@ -2208,6 +2216,7 @@ export interface ExtensionContextActions {
 	getContextUsage: () => ContextUsage | undefined;
 	compact: (options?: CompactOptions) => void;
 	getSystemPrompt: () => string;
+	resolveSkillCommand?: (text: string) => ResolvedSkillCommand | undefined;
 	getSystemPromptOptions?: () => BuildSystemPromptOptions;
 	/** Backs `ExtensionToolContext.executeTool()`. Without it, nested calls fail. */
 	executeTool?: (

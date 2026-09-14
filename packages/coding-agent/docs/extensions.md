@@ -217,6 +217,20 @@ These operations are command-only because calling them from lifecycle handlers c
 
 Session replacement invalidates the old context. Capture only plain data before switching, then use the fresh context supplied to `withSession` for session-bound work.
 
+<a id="ctxresolveskillcommand"></a>
+
+`ctx.resolveSkillCommand(text: string): ResolvedSkillCommand | undefined` resolves an exact `/skill:name` command against currently loaded skills without reading or expanding the file. It returns `{ skill: Readonly<Skill>, args: string }`, with trimmed arguments, or `undefined` for other input or unknown skills. Use it in `input` handlers before skill and prompt-template expansion instead of parsing commands or rediscovering files:
+
+```typescript
+pi.on("input", (event, ctx) => {
+  const invocation = ctx.resolveSkillCommand(event.text);
+  if (!invocation) return;
+
+  ctx.ui.notify(`Routing ${invocation.skill.name}`, "info");
+  return { action: "handled" };
+});
+```
+
 <a id="pigetpausestate"></a>
 <a id="pirequestpause"></a>
 <a id="piresume"></a>
