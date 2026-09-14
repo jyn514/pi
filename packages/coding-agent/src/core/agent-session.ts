@@ -81,6 +81,7 @@ import {
 	type MessageStartEvent,
 	type MessageUpdateEvent,
 	type ReplacedSessionContext,
+	type ResolvedSkillCommand,
 	type SessionBeforeCompactResult,
 	type SessionBeforeTreeResult,
 	type SessionCompactFailedEvent,
@@ -1319,7 +1320,6 @@ export class AgentSession {
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 		const preflightResult = options?.preflightResult;
 		let messages: AgentMessage[] | undefined;
-		let nextSystemPrompt: string | undefined;
 
 		try {
 			this._throwIfPausedForWork();
@@ -1449,7 +1449,6 @@ export class AgentSession {
 			const updateMessage = this._preparePromptAndToolLoadout(result.systemPromptOptions);
 			this._runSystemPromptOptions = result.systemPromptOptions;
 			if (updateMessage) messages.unshift(updateMessage);
-			nextSystemPrompt = result?.systemPrompt;
 		} catch (error) {
 			preflightResult?.(false);
 			throw error;
@@ -1478,8 +1477,6 @@ export class AgentSession {
 			messages.push(msg);
 		}
 		this._pendingNextTurnMessages = [];
-		this._systemPromptOverride = nextSystemPrompt;
-		this.agent.state.systemPrompt = nextSystemPrompt ?? this._baseSystemPrompt;
 		preflightResult?.(true);
 
 		await this._runAgentPrompt(messages, operationGeneration);
@@ -1514,20 +1511,24 @@ export class AgentSession {
 		}
 	}
 
-	/**
-	 * Expand skill commands (/skill:name args) to their full content.
-	 * Returns the expanded text, or the original text if not a skill command or skill not found.
-	 * Emits errors via extension runner if file read fails.
-	 */
-	private _expandSkillCommand(text: string): string {
-		if (!text.startsWith("/skill:")) return text;
+	resolveSkillCommand(text: string): ResolvedSkillCommand | undefined {
+		if (!text.startsWith("/skill:")) return undefined;
 
 		const spaceIndex = text.indexOf(" ");
 		const skillName = spaceIndex === -1 ? text.slice(7) : text.slice(7, spaceIndex);
 		const args = spaceIndex === -1 ? "" : text.slice(spaceIndex + 1).trim();
+		const skill = this.resourceLoader.getSkills().skills.find((candidate) => candidate.name === skillName);
+		return skill ? { skill: { ...skill }, args } : undefined;
+	}
 
-		const skill = this.resourceLoader.getSkills().skills.find((s) => s.name === skillName);
-		if (!skill) return text; // Unknown skill, pass through
+	/**
+	 * Expand skill commands (/skill:name args) to their full content.
+	 * Returns the original text when the command does not resolve or the skill cannot be read.
+	 */
+	private _expandSkillCommand(text: string): string {
+		const invocation = this.resolveSkillCommand(text);
+		if (!invocation) return text;
+		const { skill, args } = invocation;
 
 		try {
 			const content = readFileSync(skill.filePath, "utf-8");
@@ -2938,6 +2939,7 @@ export class AgentSession {
 					})();
 				},
 				getSystemPrompt: () => this.systemPrompt,
+				resolveSkillCommand: (text) => this.resolveSkillCommand(text),
 				getSystemPromptOptions: () => this._baseSystemPromptOptions,
 			},
 			{

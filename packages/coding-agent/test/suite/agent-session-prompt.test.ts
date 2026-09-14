@@ -5,10 +5,10 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall, type Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import type { ExtensionAPI, InputEvent } from "../../src/core/extensions/index.ts";
+import type { ExtensionAPI, InputEvent, ResolvedSkillCommand } from "../../src/core/extensions/index.ts";
 import type { PromptTemplate } from "../../src/core/prompt-templates.ts";
 import { createSyntheticSourceInfo } from "../../src/core/source-info.ts";
-import { createTestResourceLoader } from "../utilities.ts";
+import { createTestExtensionsResult, createTestResourceLoader } from "../utilities.ts";
 import { createHarness, getMessageText, type Harness } from "./harness.ts";
 
 describe("AgentSession prompt characterization", () => {
@@ -152,8 +152,19 @@ describe("AgentSession prompt characterization", () => {
 		const skillPath = join(tempDir, "test-skill.md");
 		writeFileSync(skillPath, "# Test Skill\n\nUse the skill body.");
 
+		let resolvedCommand: ResolvedSkillCommand | undefined;
+		const extensionsResult = await createTestExtensionsResult(
+			[
+				(pi) => {
+					pi.on("input", (event, ctx) => {
+						resolvedCommand = ctx.resolveSkillCommand(event.text);
+					});
+				},
+			],
+			tempDir,
+		);
 		const resourceLoader = {
-			...createTestResourceLoader(),
+			...createTestResourceLoader({ extensionsResult }),
 			getSkills: () => ({
 				skills: [
 					{
@@ -177,6 +188,14 @@ describe("AgentSession prompt characterization", () => {
 		harnesses.push(harness);
 		let expandedPrompt = "";
 
+		expect(harness.session.resolveSkillCommand("plain input")).toBeUndefined();
+		expect(harness.session.resolveSkillCommand("/skill:missing")).toBeUndefined();
+		expect(harness.session.resolveSkillCommand("/skill:test-extra")).toBeUndefined();
+		expect(harness.session.resolveSkillCommand("/skill:test")).toMatchObject({ args: "" });
+		expect(harness.session.resolveSkillCommand("/skill:test    padded arguments   ")).toMatchObject({
+			args: "padded arguments",
+		});
+
 		harness.setResponses([
 			(context) => {
 				const user = context.messages.find((message) => message.role === "user");
@@ -187,6 +206,10 @@ describe("AgentSession prompt characterization", () => {
 
 		await harness.session.prompt("/skill:test explain this");
 
+		expect(resolvedCommand).toMatchObject({
+			skill: { name: "test", filePath: skillPath, baseDir: tempDir },
+			args: "explain this",
+		});
 		expect(expandedPrompt).toContain('<skill name="test" location="');
 		expect(expandedPrompt).toContain("Use the skill body.");
 		expect(expandedPrompt).toContain("explain this");

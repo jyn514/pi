@@ -128,6 +128,7 @@ export type {
 	ResolvedCommand,
 	ResourcesDiscoverEvent,
 	ResourcesDiscoverResult,
+	ResolvedSkillCommand,
 	SessionBeforeCompactEvent,
 	SessionBeforeCompactResult,
 	SessionBeforeForkEvent,

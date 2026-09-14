@@ -318,6 +318,7 @@ export class ExtensionRunner {
 	private getContextUsageFn: () => ContextUsage | undefined = () => undefined;
 	private compactFn: (options?: CompactOptions) => void = () => {};
 	private getSystemPromptFn: () => string = () => "";
+	private resolveSkillCommandFn: NonNullable<ExtensionContextActions["resolveSkillCommand"]> = () => undefined;
 	private getSystemPromptOptionsFn: () => BuildSystemPromptOptions = () =>
 		normalizeBuildSystemPromptOptions({ cwd: this.cwd });
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
@@ -387,8 +388,8 @@ export class ExtensionRunner {
 		this.getContextUsageFn = contextActions.getContextUsage;
 		this.compactFn = contextActions.compact;
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
-		this.getSystemPromptOptionsFn =
-			contextActions.getSystemPromptOptions ?? (() => normalizeBuildSystemPromptOptions({ cwd: this.cwd }));
+		this.resolveSkillCommandFn = contextActions.resolveSkillCommand ?? (() => undefined);
+		this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
 
 		// Flush provider registrations queued during extension loading
 		for (const { name, config, extensionPath } of this.runtime.pendingProviderRegistrations) {
@@ -838,6 +839,10 @@ export class ExtensionRunner {
 			getSystemPrompt: () => {
 				runner.assertActive();
 				return runner.getSystemPromptFn();
+			},
+			resolveSkillCommand: (text) => {
+				runner.assertActive();
+				return runner.resolveSkillCommandFn(text);
 			},
 		};
 	}
