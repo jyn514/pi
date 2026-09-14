@@ -70,6 +70,20 @@ describe("AssistantMessageComponent", () => {
 		expect(lines[2]).toContain("answer");
 	});
 
+	test("compacts thinking paragraph breaks when vertical padding is disabled", () => {
+		initTheme("dark");
+		const message = createAssistantMessage([{ type: "thinking", thinking: "first paragraph\n\nsecond paragraph" }]);
+		const compact = new AssistantMessageComponent(message, false, undefined, "Thinking...", 1, [], 0);
+		const lines = compact.render(80).map((line) => stripAnsi(line));
+
+		expect(lines).toHaveLength(2);
+		expect(lines[0]).toContain("first paragraph");
+		expect(lines[1]).toContain("second paragraph");
+
+		const padded = new AssistantMessageComponent(message);
+		expect(padded.render(80)).toHaveLength(4);
+	});
+
 	test("does not add OSC 133 zone markers when assistant message contains tool calls", () => {
 		initTheme("dark");
 

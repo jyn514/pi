@@ -131,7 +131,9 @@ export class AssistantMessageComponent extends Container {
 					}
 					const thinking = thinkingContent.thinking.trim();
 					if (thinking) {
-						thinkingBlocks.push(thinking);
+						// Providers may use blank lines between streamed reasoning parts. Compact only
+						// at outputPadY=0 so padded output and the underlying message stay unchanged.
+						thinkingBlocks.push(this.outputPadY === 0 ? thinking.replace(/\n{2,}/g, "\n") : thinking);
 					}
 				}
 				i--;
