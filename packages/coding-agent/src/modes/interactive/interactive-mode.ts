@@ -2279,6 +2279,7 @@ export class InteractiveMode {
 				})();
 			},
 			getSystemPrompt: () => this.session.systemPrompt,
+			resolveSkillCommand: (text) => this.session.resolveSkillCommand(text),
 		});
 
 		// Set up the extension shortcut handler on the default editor

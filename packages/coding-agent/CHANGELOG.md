@@ -5,6 +5,7 @@
 ### Added
 
 - Added a Models Configuration reference generated from the `models.json` schema, listing all provider, model, model override, and compatibility fields ([#10790](https://github.com/earendil-works/pi/issues/10790))
+- Added `ctx.resolveSkillCommand()` so input handlers can resolve loaded `/skill:name` commands without duplicating Pi's parsing or resource discovery.
 
 ### Changed
 
