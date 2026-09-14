@@ -7,6 +7,7 @@
 - Added the configurable `tui.editor.cursorBufferStart` action, bound to `Ctrl+Home` and `Cmd+Up` by default, for moving to the start of the edit buffer.
 - Added `outputPadY` to configure vertical padding for user, assistant, custom, and tool messages, including extension message renderers.
 - Added `pi.registerProviderTool()` for provider-executed web search without a nested model call, plus synchronous `provider_event` extension observers for native search and citation metadata.
+- Added `ctx.resolveSkillCommand()` so input handlers can resolve loaded `/skill:name` commands without duplicating Pi's parsing or resource discovery.
 
 ## [0.84.4] - 2026-08-28
 

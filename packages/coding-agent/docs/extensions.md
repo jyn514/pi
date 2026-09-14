@@ -953,9 +953,11 @@ pi.on("input", async (event, ctx) => {
   // Route by source: skip processing for extension-injected messages
   if (event.source === "extension") return { action: "continue" };
 
-  // Intercept skill commands before expansion
-  if (event.text.startsWith("/skill:")) {
-    // Could transform, block, or let pass through
+  // Resolve and intercept a loaded skill before expansion
+  const skillCommand = ctx.resolveSkillCommand(event.text);
+  if (skillCommand) {
+    console.log(skillCommand.skill.name, skillCommand.args);
+    // Could transform, handle, or let pass through
   }
 
   return { action: "continue" };  // Default: pass through to expansion
@@ -1099,6 +1101,20 @@ ctx.compact({
   onError: (error) => {
     ctx.ui.notify(`Compaction failed: ${error.message}`, "error");
   },
+});
+```
+
+### ctx.resolveSkillCommand()
+
+Resolves an exact `/skill:name` command against Pi's currently loaded skills without reading or expanding the skill file. It returns the skill metadata and trimmed arguments, or `undefined` for other input and unknown skills. Use it from `input` handlers instead of parsing skill commands or rediscovering skill files.
+
+```typescript
+pi.on("input", (event, ctx) => {
+  const invocation = ctx.resolveSkillCommand(event.text);
+  if (!invocation) return;
+
+  ctx.ui.notify(`Routing ${invocation.skill.name}`, "info");
+  return { action: "handled" };
 });
 ```
 

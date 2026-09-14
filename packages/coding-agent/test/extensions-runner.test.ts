@@ -110,8 +110,9 @@ describe("ExtensionRunner", () => {
 			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
 			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
 
-			// Before bindCore the default is an empty list (never undefined).
+			// Before bindCore, context methods use safe defaults.
 			expect(runner.createContext().scopedModels).toEqual([]);
+			expect(runner.createContext().resolveSkillCommand("/skill:test")).toBeUndefined();
 
 			// After bindCore wires a getScopedModels action, ctx.scopedModels
 			// returns it live (same reference, lazy getter).
