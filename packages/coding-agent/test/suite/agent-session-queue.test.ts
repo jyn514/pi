@@ -57,6 +57,37 @@ async function createWaitingHarness(
 	};
 }
 
+function createHeldInput() {
+	let release = () => {};
+	let markStarted = () => {};
+	let markReturned = () => {};
+	const started = new Promise<void>((resolve) => {
+		markStarted = resolve;
+	});
+	const returned = new Promise<void>((resolve) => {
+		markReturned = resolve;
+	});
+	const released = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	return {
+		started,
+		returned,
+		release: () => release(),
+		extension: (pi: ExtensionAPI) => {
+			pi.on("input", async (event) => {
+				if (event.text !== "held input") return;
+				markStarted();
+				await released;
+				markReturned();
+				return { action: "transform", text: "transformed held input" };
+			});
+		},
+	};
+}
+
+const queuePaths = ["prompt steer", "prompt followUp", "steer", "followUp"] as const;
+
 describe("AgentSession queue characterization", () => {
 	const harnesses: Harness[] = [];
 
@@ -413,8 +444,9 @@ describe("AgentSession queue characterization", () => {
 			{ deliverAs: "nextTurn" },
 		);
 		harness.setResponses([fauxAssistantMessage("must not run")]);
+		const preflightCancelled = vi.fn();
 
-		const promptPromise = harness.session.prompt("abort during preflight");
+		const promptPromise = harness.session.prompt("abort during preflight", { preflightCancelled });
 		await inputStarted;
 		harness.session.requestPause();
 		releaseInput?.();
@@ -423,6 +455,7 @@ describe("AgentSession queue characterization", () => {
 		await harness.session.abort();
 		await promptPromise;
 
+		expect(preflightCancelled).toHaveBeenCalledOnce();
 		expect(harness.faux.state.callCount).toBe(0);
 		expect(harness.getPendingResponseCount()).toBe(1);
 		expect(harness.session.isIdle).toBe(true);
@@ -443,6 +476,162 @@ describe("AgentSession queue characterization", () => {
 		await harness.session.prompt("after abort");
 		expect(getAssistantTexts(harness)).toEqual(["retained"]);
 	});
+
+	it("cancels normal prompt input still held when abort returns, preserving accepted queues", async () => {
+		const input = createHeldInput();
+		const harness = await createHarness({ tools: [], extensionFactories: [input.extension] });
+		harnesses.push(harness);
+		await harness.session.steer("accepted steer");
+		await harness.session.followUp("accepted follow-up");
+		const preflightCancelled = vi.fn();
+		const preflightResult = vi.fn();
+		const submission = harness.session.prompt("held input", { preflightCancelled, preflightResult });
+		await input.started;
+
+		await harness.session.abort();
+		// A later pause must not park work already cancelled by abort.
+		harness.session.requestPause();
+		input.release();
+		await submission;
+
+		expect(preflightCancelled).toHaveBeenCalledOnce();
+		expect(preflightResult).not.toHaveBeenCalled();
+		expect(harness.faux.state.callCount).toBe(0);
+		expect(getUserTexts(harness)).toEqual([]);
+		expect(harness.session.getSteeringMessages()).toEqual(["accepted steer"]);
+		expect(harness.session.getFollowUpMessages()).toEqual(["accepted follow-up"]);
+		harness.session.resume();
+		harness.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two"), fauxAssistantMessage("three")]);
+		await harness.session.prompt("after abort");
+		expect(getUserTexts(harness)).toEqual(["after abort", "accepted steer", "accepted follow-up"]);
+	});
+
+	it.each(queuePaths)("cancels held %s input on abort without losing accepted queues", async (path) => {
+		const input = createHeldInput();
+		const waiting = await createWaitingHarness({ extensionFactories: [input.extension] });
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" })]);
+		await waitForToolStart;
+		await harness.session.steer("accepted steer");
+		await harness.session.followUp("accepted follow-up");
+		const preflightCancelled = vi.fn();
+		const preflightResult = vi.fn();
+		const submission =
+			path === "prompt steer" || path === "prompt followUp"
+				? harness.session.prompt("held input", {
+						streamingBehavior: path === "prompt steer" ? "steer" : "followUp",
+						preflightCancelled,
+						preflightResult,
+					})
+				: harness.session[path]("held input");
+		const settled =
+			path === "steer" || path === "followUp"
+				? expect(submission).rejects.toThrow("Input cancelled before acceptance.")
+				: expect(submission).resolves.toBeUndefined();
+		await input.started;
+
+		// Complete input while abort is settling: the run is still streaming,
+		// so prompt() must cancel rather than commit to its streaming queue branch.
+		const abort = harness.session.abort();
+		try {
+			input.release();
+			await settled;
+		} finally {
+			// The test tool is non-abortable; let the admitted run settle.
+			releaseToolExecution();
+			await abort;
+			await promptPromise;
+		}
+
+		expect(preflightResult).not.toHaveBeenCalled();
+		if (path.startsWith("prompt")) expect(preflightCancelled).toHaveBeenCalledOnce();
+		expect(harness.session.getSteeringMessages()).toEqual(["accepted steer"]);
+		expect(harness.session.getFollowUpMessages()).toEqual(["accepted follow-up"]);
+		expect(getUserTexts(harness)).toEqual(["start"]);
+		harness.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two"), fauxAssistantMessage("three")]);
+		await harness.session.prompt("after abort");
+		expect(getUserTexts(harness)).toEqual(["start", "after abort", "accepted steer", "accepted follow-up"]);
+	});
+
+	it.each(queuePaths)("parks preflight-held %s input until resume before queue acceptance", async (path) => {
+		const input = createHeldInput();
+		const waiting = await createWaitingHarness({ extensionFactories: [input.extension] });
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("continued"),
+			fauxAssistantMessage("followed up"),
+		]);
+		await waitForToolStart;
+		const preflightResult = vi.fn();
+		let accepted = false;
+		const submission = (
+			path === "prompt steer" || path === "prompt followUp"
+				? harness.session.prompt("held input", {
+						streamingBehavior: path === "prompt steer" ? "steer" : "followUp",
+						preflightResult,
+					})
+				: harness.session[path]("held input")
+		).then((result) => {
+			accepted = true;
+			return result;
+		});
+		// Disposal cancels admission if an ordering assertion fails before resume.
+		void submission.catch(() => {});
+		await input.started;
+		harness.session.requestPause();
+		input.release();
+		await input.returned;
+		// Input admission must not publish paused before the held tool finishes.
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		try {
+			expect(harness.session.pauseState).toBe("pausing");
+			expect(harness.eventsOfType("pause_state_changed").map((event) => event.state)).toEqual(["pausing"]);
+			expect(harness.eventsOfType("tool_execution_end")).toHaveLength(0);
+			expect(accepted).toBe(false);
+			expect(harness.session.pendingMessageCount).toBe(0);
+		} finally {
+			releaseToolExecution();
+		}
+		await vi.waitFor(() => expect(harness.session.pauseState).toBe("paused"));
+		expect(accepted).toBe(false);
+		expect(preflightResult).not.toHaveBeenCalled();
+		expect(harness.session.pendingMessageCount).toBe(0);
+		expect(harness.faux.state.callCount).toBe(1);
+
+		harness.session.resume();
+		const result = await submission;
+		if (path.startsWith("prompt")) expect(preflightResult).toHaveBeenCalledWith("queued");
+		else expect(result).toBe("queued");
+		await promptPromise;
+		expect(getUserTexts(harness)).toEqual(["start", "transformed held input"]);
+	});
+
+	it.each(["steer", "followUp"] as const)(
+		"aborts parked direct %s admission even if paused again",
+		async (behavior) => {
+			const input = createHeldInput();
+			const harness = await createHarness({ tools: [], extensionFactories: [input.extension] });
+			harnesses.push(harness);
+			const submission = harness.session[behavior]("held input");
+			const rejection = expect(submission).rejects.toThrow("Input cancelled before acceptance.");
+			await input.started;
+			harness.session.requestPause();
+			input.release();
+			await input.returned;
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(harness.session.pendingMessageCount).toBe(0);
+
+			const abort = harness.session.abort();
+			harness.session.requestPause();
+			await abort;
+			await rejection;
+			expect(harness.session.pauseState).toBe("paused");
+			expect(harness.session.pendingMessageCount).toBe(0);
+		},
+	);
 
 	it("delivers extension-origin steering messages before the next LLM call", async () => {
 		let extensionApi: ExtensionAPI | undefined;

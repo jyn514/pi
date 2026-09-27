@@ -340,6 +340,7 @@
 - Fixed inherited OpenAI Responses streams from servers that omit `output_index`, such as llama.cpp, running mixed-up tool calls; such streams now end with an error ([#9974](https://github.com/earendil-works/pi/issues/9974)).
 - Fixed inherited Anthropic and OpenAI Codex browser sign-in waiting indefinitely after the provider redirected with an authorization error, and Anthropic sign-in failing when its callback port is in use.
 - Fixed inherited GitHub Copilot Claude Opus 5.5 offering unsupported thinking levels when upstream model metadata is incomplete.
+- Fixed normal session completion skipping `agent_before_settle` handlers and RPC prompts cancelled during preflight receiving no response.
 
 ## [0.87.1] - 2026-09-22
 

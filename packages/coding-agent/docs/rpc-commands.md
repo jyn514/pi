@@ -95,6 +95,8 @@ See [set_follow_up_mode](#set_follow_up_mode) for controlling how follow-up mess
 
 Abort the current operation and wait for the session to become idle before responding.
 
+Already accepted steering and follow-up queues survive abort; use `clear_queue` to remove them. Work still held in asynchronous input handlers or prompt preflight before queue/provider admission is cancelled instead. Input handlers are not interrupted; cancelled submissions report failure when they reach admission.
+
 ```json
 {"type": "abort"}
 ```
@@ -118,6 +120,8 @@ Response:
 ```
 
 A pause does not interrupt a provider response or its tool batch. While paused, new prompts, steering, and follow-up messages are rejected; resume the session to continue.
+
+Work that began unpaused but is still in asynchronous input/preflight waits at admission until resume or abort. These admission waiters do not publish `paused`; the active turn must complete first.
 
 ### resume
 
