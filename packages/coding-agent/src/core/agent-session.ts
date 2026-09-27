@@ -327,6 +327,8 @@ export interface PromptOptions {
 	source?: InputSource;
 	/** Internal hook used by RPC mode to observe how an accepted prompt was dispatched. Not called if the prompt is rejected. */
 	preflightResult?: (disposition: PromptDisposition) => void;
+	/** Internal hook used by RPC mode when preflight is cancelled before accepting the prompt. */
+	preflightCancelled?: () => void;
 }
 
 /** Options for model/thinking mutations. */
@@ -1064,6 +1066,16 @@ export class AgentSession {
 		if (this._pauseState === "paused") {
 			throw new Error("Session is paused; resume it before submitting work.");
 		}
+	}
+
+	/** Check and commit together; the unpaused path must not yield. */
+	private _admitWork(operationGeneration: number, commit: () => void): boolean | Promise<boolean> {
+		if (operationGeneration !== this._pauseCancellationGeneration) return false;
+		if (this._pauseState !== "unpaused") {
+			return this._waitForResume().then(() => this._admitWork(operationGeneration, commit));
+		}
+		commit();
+		return true;
 	}
 
 	private _emitQueueUpdate(): void {
@@ -1869,7 +1881,7 @@ export class AgentSession {
 	): Promise<void> {
 		// Do not yield when unpaused: admission and marking the run active must be atomic.
 		if (this._pauseState !== "unpaused") {
-			await this._waitForPauseBoundary();
+			await this._waitForPauseBoundary(undefined, operationGeneration);
 		}
 		if (operationGeneration !== this._pauseCancellationGeneration) return;
 		this._isAgentRunActive = true;
@@ -1907,7 +1919,6 @@ export class AgentSession {
 				if (operationGeneration !== this._pauseCancellationGeneration || this._agentRunAbortRequested) break;
 
 				const postRunContinuation = await this._handlePostAgentRun();
-				if (!postRunContinuation) break;
 
 				if (this._pauseState !== "unpaused") {
 					await this._waitForPauseBoundary();
@@ -2171,12 +2182,18 @@ export class AgentSession {
 					"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
 				);
 			}
-			if (options.streamingBehavior === "followUp") {
-				await this._queueFollowUp(expandedText, currentImages);
-			} else {
-				await this._queueSteer(expandedText, currentImages);
+			const admission = this._admitWork(operationGeneration, () => {
+				if (options.streamingBehavior === "followUp") {
+					this._queueFollowUp(expandedText, currentImages);
+				} else {
+					this._queueSteer(expandedText, currentImages);
+				}
+				preflightResult?.("queued");
+			});
+			if (!(typeof admission === "boolean" ? admission : await admission)) {
+				options?.preflightCancelled?.();
 			}
-			preflightResult?.("queued");
+
 			return;
 		}
 
@@ -2200,11 +2217,19 @@ export class AgentSession {
 			throw new Error(formatNoApiKeyFoundMessage(this.model.provider));
 		}
 
-		await this._startRun(
-			{ messageType: "user", prompt: expandedText, images: currentImages },
-			() => preflightResult?.("started"),
-			operationGeneration,
-		);
+		let promptPromise: Promise<void> | undefined;
+		const admission = this._admitWork(operationGeneration, () => {
+			promptPromise = this._startRun(
+				{ messageType: "user", prompt: expandedText, images: currentImages },
+				() => preflightResult?.("started"),
+				operationGeneration,
+			);
+		});
+		if (!(typeof admission === "boolean" ? admission : await admission)) {
+			options?.preflightCancelled?.();
+			return;
+		}
+		await promptPromise;
 	}
 
 	/**
@@ -2277,6 +2302,7 @@ export class AgentSession {
 		behavior: "steer" | "followUp",
 		source: InputSource,
 	): Promise<QueuedInputDisposition> {
+		const operationGeneration = this._pauseCancellationGeneration;
 		if (text.startsWith("/")) {
 			this._throwIfExtensionCommand(text);
 		}
@@ -2292,10 +2318,15 @@ export class AgentSession {
 		let expandedText = this._expandSkillCommand(processedInput.text);
 		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 
-		if (behavior === "steer") {
-			await this._queueSteer(expandedText, processedInput.images);
-		} else {
-			await this._queueFollowUp(expandedText, processedInput.images);
+		const admission = this._admitWork(operationGeneration, () => {
+			if (behavior === "steer") {
+				this._queueSteer(expandedText, processedInput.images);
+			} else {
+				this._queueFollowUp(expandedText, processedInput.images);
+			}
+		});
+		if (!(typeof admission === "boolean" ? admission : await admission)) {
+			throw new Error("Input cancelled before acceptance.");
 		}
 		return "queued";
 	}
@@ -2338,7 +2369,7 @@ export class AgentSession {
 	/**
 	 * Internal: Queue a steering message (already expanded, no extension command check).
 	 */
-	private async _queueSteer(text: string, images?: ImageContent[]): Promise<void> {
+	private _queueSteer(text: string, images?: ImageContent[]): void {
 		this._steeringMessages.push(text);
 		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
@@ -2355,7 +2386,7 @@ export class AgentSession {
 	/**
 	 * Internal: Queue a follow-up message (already expanded, no extension command check).
 	 */
-	private async _queueFollowUp(text: string, images?: ImageContent[]): Promise<void> {
+	private _queueFollowUp(text: string, images?: ImageContent[]): void {
 		this._followUpMessages.push(text);
 		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
@@ -2547,13 +2578,17 @@ export class AgentSession {
 		this._releasePauseWaiter();
 	}
 
-	private async _waitForPauseBoundary(signal?: AbortSignal): Promise<void> {
+	private async _waitForPauseBoundary(signal?: AbortSignal, operationGeneration?: number): Promise<void> {
 		while (this._pauseState !== "unpaused") {
-			if (signal?.aborted) return;
+			if (
+				signal?.aborted ||
+				(operationGeneration !== undefined && operationGeneration !== this._pauseCancellationGeneration)
+			)
+				return;
 			if (this._pauseState === "pausing") {
 				this._setPauseState("paused");
 			}
-			const paused = this._waitWhilePaused();
+			const paused = this._waitForResume();
 			if (!signal) {
 				await paused;
 				continue;
@@ -2573,8 +2608,9 @@ export class AgentSession {
 		}
 	}
 
-	private _waitWhilePaused(): Promise<void> {
-		if (this._pauseState !== "paused") return Promise.resolve();
+	/** Wait for pause clearance without advancing an active turn's pause state. */
+	private _waitForResume(): Promise<void> {
+		if (this._pauseState === "unpaused") return Promise.resolve();
 		if (!this._pauseWaitPromise) {
 			this._pauseWaitPromise = new Promise((resolve) => {
 				this._resolvePauseWait = resolve;

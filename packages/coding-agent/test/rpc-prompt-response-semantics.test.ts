@@ -452,6 +452,65 @@ describe("RPC prompt response semantics", () => {
 			await cleanup();
 		}
 	});
+
+	it("responds when abort cancels a prompt parked during preflight", async () => {
+		let releaseInput: (() => void) | undefined;
+		let markInputStarted: (() => void) | undefined;
+		const inputStarted = new Promise<void>((resolve) => {
+			markInputStarted = resolve;
+		});
+		const inputRelease = new Promise<void>((resolve) => {
+			releaseInput = resolve;
+		});
+		const extensionsResult = await createTestExtensionsResult([
+			(pi) => {
+				pi.on("input", async () => {
+					markInputStarted?.();
+					await inputRelease;
+				});
+			},
+		]);
+		const { lineHandler, cleanup } = await startRpcMode({ withAuth: true, responseDelayMs: 0, extensionsResult });
+
+		try {
+			lineHandler(JSON.stringify({ id: "cancelled-prompt", type: "prompt", message: "wait for input" }));
+			await inputStarted;
+
+			lineHandler(JSON.stringify({ id: "pause-preflight", type: "pause" }));
+			await vi.waitFor(() => {
+				expect(parseOutputLines(rpcIo.outputLines)).toContainEqual({
+					id: "pause-preflight",
+					type: "response",
+					command: "pause",
+					success: true,
+				});
+			});
+
+			lineHandler(JSON.stringify({ id: "abort-preflight", type: "abort" }));
+			await vi.waitFor(() => {
+				expect(parseOutputLines(rpcIo.outputLines)).toContainEqual({
+					id: "abort-preflight",
+					type: "response",
+					command: "abort",
+					success: true,
+				});
+			});
+
+			releaseInput?.();
+			await vi.waitFor(() => {
+				const responses = getPromptResponses(rpcIo.outputLines, "cancelled-prompt");
+				expect(responses).toHaveLength(1);
+				expect(responses[0]).toMatchObject({
+					success: false,
+					error: expect.stringContaining("cancelled before it was accepted"),
+				});
+			});
+		} finally {
+			releaseInput?.();
+			await cleanup();
+		}
+	});
+
 	it("returns and clears queued steering and follow-up messages", async () => {
 		const { lineHandler, cleanup } = await startRpcMode({ withAuth: true, responseDelayMs: 500 });
 
