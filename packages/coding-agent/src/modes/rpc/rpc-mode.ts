@@ -409,7 +409,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			case "prompt": {
 				// Start prompt handling immediately, but emit the authoritative response only after
 				// prompt preflight succeeds. Queued and immediately handled prompts also count as success.
-				let preflightSucceeded = false;
+				let preflightResponded = false;
 				// Extension commands run inside prompt(); defer shutdown requests until it settles.
 				activeCommands++;
 				void session
@@ -418,12 +418,16 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 						streamingBehavior: command.streamingBehavior,
 						source: "rpc",
 						preflightResult: (disposition) => {
-							preflightSucceeded = true;
+							preflightResponded = true;
 							output(success(id, "prompt", { disposition }));
+						},
+						preflightCancelled: () => {
+							preflightResponded = true;
+							output(error(id, "prompt", "Prompt was cancelled before it was accepted."));
 						},
 					})
 					.catch((e) => {
-						if (!preflightSucceeded) {
+						if (!preflightResponded) {
 							output(error(id, "prompt", e.message));
 						}
 					})
