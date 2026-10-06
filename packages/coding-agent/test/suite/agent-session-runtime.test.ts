@@ -199,18 +199,11 @@ describe("AgentSessionRuntime characterization", () => {
 
 		expect(switchResult.cancelled).toBe(false);
 		expect(runtime.session.sessionFile).toBe(firstSessionFile);
-		// The outgoing session settled before replacement: the interrupted tool
-		// call has a persisted tool result instead of dangling forever.
+		// The aborted turn persists its tool result and does not continue to another provider request.
 		const outgoingEntries = SessionManager.open(outgoingSession.sessionFile!)
 			.getEntries()
 			.filter((entry) => entry.type === "message");
-		expect(outgoingEntries.map((entry) => entry.message.role)).toEqual([
-			"system",
-			"user",
-			"assistant",
-			"toolResult",
-			"assistant",
-		]);
+		expect(outgoingEntries.map((entry) => entry.message.role)).toEqual(["system", "user", "assistant", "toolResult"]);
 	});
 
 	it("preserves an existing session when importing a file with the same name", async () => {

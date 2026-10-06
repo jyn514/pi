@@ -1879,28 +1879,18 @@ export class AgentSession {
 		try {
 			await this.agent.prompt(messages);
 			while (!this._agentRunAbortRequested) {
-				// Error turns bypass shouldStopAfterTurn, and a pause can also arrive
-				// during session-level retry or automatic compaction preparation.
-				if (this._pauseState !== "unpaused") {
-					await this._waitForPauseBoundary();
-				}
-				if (operationGeneration !== this._pauseCancellationGeneration || this._agentRunAbortRequested) break;
+				if (operationGeneration !== this._pauseCancellationGeneration) break;
 
 				const postRunContinuation = await this._handlePostAgentRun();
-
-				if (this._pauseState !== "unpaused") {
-					await this._waitForPauseBoundary();
-				}
 				if (operationGeneration !== this._pauseCancellationGeneration || this._agentRunAbortRequested) break;
 				if (postRunContinuation) {
+					if (this._pauseState !== "unpaused") await this._waitForPauseBoundary();
+					if (operationGeneration !== this._pauseCancellationGeneration || this._agentRunAbortRequested) break;
 					await this.agent.continue();
 					continue;
 				}
 
 				const beforeSettleContinuation = await this._runBeforeSettleBoundary();
-				if (this._pauseState !== "unpaused") {
-					await this._waitForPauseBoundary();
-				}
 				if (
 					operationGeneration !== this._pauseCancellationGeneration ||
 					this._agentRunAbortRequested ||
@@ -1908,6 +1898,8 @@ export class AgentSession {
 				) {
 					break;
 				}
+				if (this._pauseState !== "unpaused") await this._waitForPauseBoundary();
+				if (operationGeneration !== this._pauseCancellationGeneration || this._agentRunAbortRequested) break;
 				await this.agent.continue();
 			}
 		} finally {
