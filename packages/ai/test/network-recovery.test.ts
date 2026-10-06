@@ -3,6 +3,7 @@ import { stream } from "../src/api/openai-codex-responses.ts";
 import { fauxAssistantMessage } from "../src/providers/faux.ts";
 import type { Model } from "../src/types.ts";
 import { isRetryableAssistantError, retryAssistantCall } from "../src/utils/retry.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const model: Model<"openai-codex-responses"> = {
 	id: "test",
@@ -18,6 +19,10 @@ const model: Model<"openai-codex-responses"> = {
 };
 const token = `a.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "test" } })).toString("base64")}.b`;
 const dns = "Codex sidecar authentication or connection failed: [Errno -2] Name does not resolve";
+
+function emptyContext() {
+	return normalizeContext({ messages: [] });
+}
 
 afterEach(() => {
 	vi.useRealTimers();
@@ -39,7 +44,7 @@ describe.each([0, 2])("Codex retry classification with %i provider retries", (ma
 	] as const)("classifies HTTP %i %s as %s", async (status, body, disposition) => {
 		vi.useFakeTimers();
 		const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async () => new Response(body, { status }));
-		const pending = stream(model, { messages: [] }, { apiKey: token, transport: "sse", fetch, maxRetries }).result();
+		const pending = stream(model, emptyContext(), { apiKey: token, transport: "sse", fetch, maxRetries }).result();
 		await vi.runAllTimersAsync();
 		const result = await pending;
 		expect(result.errorMessage).toContain(String(status));
@@ -53,11 +58,12 @@ describe.each([0, 2])("Codex retry classification with %i provider retries", (ma
 			const fetch = vi
 				.fn<typeof globalThis.fetch>()
 				.mockRejectedValue(new TypeError("fetch failed", { cause: Object.assign(new Error(code), { code }) }));
-			const result = await stream(
-				model,
-				{ messages: [] },
-				{ apiKey: token, transport: "sse", fetch, maxRetries: 2 },
-			).result();
+			const result = await stream(model, emptyContext(), {
+				apiKey: token,
+				transport: "sse",
+				fetch,
+				maxRetries: 2,
+			}).result();
 			expect(isRetryableAssistantError(result)).toBe(false);
 			expect(fetch).toHaveBeenCalledTimes(1);
 		},
@@ -70,11 +76,7 @@ describe("bounded network retries", () => {
 		const cause = Object.assign(new Error("Unauthorized"), { status });
 		const error = new TypeError("fetch failed", { cause });
 		const fetch = vi.fn<typeof globalThis.fetch>().mockRejectedValue(error);
-		const pending = stream(
-			model,
-			{ messages: [] },
-			{ apiKey: token, transport: "sse", fetch, maxRetries: 2 },
-		).result();
+		const pending = stream(model, emptyContext(), { apiKey: token, transport: "sse", fetch, maxRetries: 2 }).result();
 		await vi.runAllTimersAsync();
 		const result = await pending;
 		expect(result.errorMessage).toContain(`Codex (${status}): Unauthorized`);
@@ -139,11 +141,12 @@ describe("bounded network retries", () => {
 		const error = new TypeError("fetch failed");
 		error.cause = new Error("CERT_HAS_EXPIRED", { cause: error });
 		const fetch = vi.fn<typeof globalThis.fetch>().mockRejectedValue(error);
-		const result = await stream(
-			model,
-			{ messages: [] },
-			{ apiKey: token, transport: "sse", fetch, maxRetries: 2 },
-		).result();
+		const result = await stream(model, emptyContext(), {
+			apiKey: token,
+			transport: "sse",
+			fetch,
+			maxRetries: 2,
+		}).result();
 		expect(result.errorMessage).toContain("CERT_HAS_EXPIRED");
 		expect(isRetryableAssistantError(result)).toBe(false);
 		expect(fetch).toHaveBeenCalledTimes(1);

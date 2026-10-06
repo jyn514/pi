@@ -27,15 +27,19 @@ function createFixture(artifactVersion = "1.2.3") {
 	writeFileSync(join(artifactRoot, "package.json"), `${JSON.stringify({ version: artifactVersion })}\n`);
 	writeFileSync(
 		join(packageRoot, "src", "models.generated.ts"),
-		'import { TEST_PROVIDER_MODELS } from "./providers/test-provider.models.ts";\n',
+		'import { TEST_PROVIDER_CLASSIFIER_MODELS, TEST_PROVIDER_IMAGE_MODELS, TEST_PROVIDER_MODELS } from "./providers/test-provider.models.ts";\n',
 	);
-	writeFileSync(join(providersDir, "test-provider.models.ts"), "export const TEST_PROVIDER_MODELS = {};\n");
+	writeFileSync(
+		join(providersDir, "test-provider.models.ts"),
+		"export const TEST_PROVIDER_CLASSIFIER_MODELS = {};\nexport const TEST_PROVIDER_IMAGE_MODELS = {};\nexport const TEST_PROVIDER_MODELS = {};\n",
+	);
 	writeFileSync(join(providersDir, "data", "sentinel"), "original\n");
 
-	const structure: ModelDataStructure = { "test-provider": { "model-a": "openai-completions" } };
+	const structure: ModelDataStructure = { "test-provider": { "chat:model-a": "openai-completions" } };
 	const content = `${JSON.stringify({
 		"openai-completions": {
-			"model-a": {
+			"chat:model-a": {
+				type: "chat",
 				id: "model-a",
 				name: "Model A",
 				api: "openai-completions",

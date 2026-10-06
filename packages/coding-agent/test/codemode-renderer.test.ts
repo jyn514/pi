@@ -25,6 +25,7 @@ function render(
 		isPartial: false,
 		expanded,
 		showImages: false,
+		outputPadY: 1,
 		isError,
 		durationMs: undefined,
 		outputPad: 1,
