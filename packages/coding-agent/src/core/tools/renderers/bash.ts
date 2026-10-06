@@ -13,6 +13,7 @@ import { VisualLinePreview } from "../../../modes/interactive/components/visual-
 import { theme } from "../../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../../extensions/types.ts";
 import type { BashToolDetails } from "../bash.ts";
+import { formatDuration } from "../format-duration.ts";
 import { getTextOutput, invalidArgText, str } from "../render-utils.ts";
 import { DEFAULT_MAX_BYTES, formatSize } from "../truncate.ts";
 
@@ -25,17 +26,6 @@ export type BashRenderState = {
 	interval: NodeJS.Timeout | undefined;
 };
 
-function formatDuration(ms: number): string {
-	const seconds = ms / 1000;
-	if (seconds < 60) return `${seconds.toFixed(1)}s`;
-
-	const totalSeconds = Math.floor(seconds);
-	const minutes = Math.floor(totalSeconds / 60);
-	const remainder = totalSeconds % 60;
-	if (minutes < 60) return `${minutes}m ${remainder}s`;
-
-	return `${Math.floor(minutes / 60)}h ${minutes % 60}m ${remainder}s`;
-}
 function formatShellCall(args: { command?: string; timeout?: number } | undefined, prompt: string): string {
 	const command = str(args?.command);
 	const timeout = args?.timeout as number | undefined;
