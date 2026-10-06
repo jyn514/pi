@@ -19,8 +19,8 @@ import { type McpServerConfig, McpServerRegistry, mcpNamespace, validateMcpServe
 import { readPiManifest } from "../pi-manifest.ts";
 import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
 import { time } from "../timings.ts";
-import { getAliases } from "./aliases.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
+import { getAliases } from "./aliases.ts";
 import type {
 	EntryRenderer,
 	Extension,
