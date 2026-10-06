@@ -1,5 +1,6 @@
 import { constants } from "node:fs";
 import { access as fsAccess } from "node:fs/promises";
+import { constants as osConstants } from "node:os";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { spawn } from "child_process";
 import { type Static, Type } from "typebox";
@@ -77,7 +78,8 @@ export interface BashOperations {
 	 * @param command The command to execute
 	 * @param cwd Working directory
 	 * @param options Execution options
-	 * @returns Promise resolving to exit code (null if killed)
+	 * @returns An exit code, or null when the operation cannot determine one. Local operations convert known
+	 * signal terminations to 128 plus the signal number; the tool rejects any remaining null exit code.
 	 */
 	exec: (
 		command: string,
@@ -150,7 +152,12 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 				if (timedOut) {
 					throw new Error(`timeout:${timeout}`);
 				}
-				return { exitCode };
+				// Node reports signal termination as null; normalize only when it gives the signal.
+				// Leave an unclassified null for the tool boundary to reject.
+				const signalCode = child.signalCode;
+				return {
+					exitCode: exitCode ?? (signalCode ? 128 + osConstants.signals[signalCode] : null),
+				};
 			} finally {
 				if (child.pid) untrackDetachedChildPid(child.pid);
 				if (timeoutHandle) clearTimeout(timeoutHandle);
@@ -202,7 +209,7 @@ function resolveSpawnContext(
 		}
 		if (ctx.thinkingLevel) env.PI_REASONING_LEVEL = ctx.thinkingLevel;
 	}
-	const baseContext: BashSpawnContext = { command, cwd, env };
+	const baseContext: BashSpawnContext = { command, cwd: ctx?.cwd ?? cwd, env };
 	return spawnHook ? spawnHook(baseContext) : baseContext;
 }
 
