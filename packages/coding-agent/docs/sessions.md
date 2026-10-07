@@ -49,6 +49,10 @@ See [Compaction Reference](compaction.md) for thresholds, retained boundaries, b
 
 By default, Pi stores sessions under `~/.pi/agent/sessions/`, grouped by working directory. Use `--session-dir`, `PI_CODING_AGENT_SESSION_DIR`, or the `sessionDir` setting to choose another location. The CLI option has highest precedence.
 
+Session listings cache titles, metadata, and searchable user/assistant text under `~/.pi/agent/cache/session-list-v1/` (or the configured agent directory). Deleting a session does not remove its cached text, so remove the cache too if you need to erase those copies. You can delete the cache directory safely; Pi rebuilds it without changing session files.
+
+Unchanged logs reuse the cache across Pi restarts. The first listing and changed logs require scanning; cached rows use the picker's existing progressive loading. Session logs remain authoritative: invalid or unavailable cache entries fall back to scanning. The cache does not change the session format or search behavior.
+
 Use `--no-session` for an ephemeral run. An ephemeral session cannot be resumed after Pi exits.
 
 Use `--session` when you already know the session path or ID. Use `--fork` to create a new session from an existing session before interactive mode starts.

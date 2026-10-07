@@ -11,7 +11,7 @@ import {
 	type UserMessage,
 	uuidv7,
 } from "@earendil-works/pi-ai";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import {
 	appendFileSync,
 	closeSync,
@@ -25,12 +25,12 @@ import {
 	statSync,
 	writeFileSync,
 } from "fs";
-import { readdir, stat } from "fs/promises";
+import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from "fs/promises";
 import { basename, join, resolve } from "path";
 import { createInterface } from "readline";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
-import { normalizePath, resolvePath } from "../utils/paths.ts";
+import { getFileRevision, normalizePath, resolvePath } from "../utils/paths.ts";
 import {
 	type BashExecutionMessage,
 	type CustomMessage,
@@ -796,11 +796,124 @@ function getMessageActivityTime(entry: SessionMessageEntry): number | undefined 
 	return Number.isNaN(t) ? undefined : t;
 }
 
+// On rebases, bump when SessionInfo's serialized shape or scanSessionInfo's extraction
+// semantics change, even if old entries still parse. Logs remain authoritative.
+const SESSION_INFO_CACHE_VERSION = 1;
+
+async function readCachedSessionInfo(
+	cachePath: string,
+	filePath: string,
+	id: string,
+	revision: string,
+	signal?: AbortSignal,
+): Promise<SessionInfo | null> {
+	const parsed: unknown = JSON.parse(await readFile(cachePath, { encoding: "utf8", signal }));
+	if (!parsed || typeof parsed !== "object") return null;
+	const cache = parsed as Record<string, unknown>;
+	if (
+		cache.version !== SESSION_INFO_CACHE_VERSION ||
+		cache.sourcePath !== resolvePath(filePath) ||
+		cache.revision !== revision ||
+		!cache.info ||
+		typeof cache.info !== "object"
+	)
+		return null;
+
+	const info = cache.info as Record<string, unknown>;
+	if (
+		info.id !== id ||
+		typeof info.path !== "string" ||
+		resolvePath(info.path) !== resolvePath(filePath) ||
+		typeof info.cwd !== "string" ||
+		(info.name !== undefined && typeof info.name !== "string") ||
+		(info.parentSessionPath !== undefined && typeof info.parentSessionPath !== "string") ||
+		typeof info.created !== "string" ||
+		typeof info.modified !== "string" ||
+		typeof info.messageCount !== "number" ||
+		!Number.isInteger(info.messageCount) ||
+		info.messageCount < 0 ||
+		typeof info.firstMessage !== "string" ||
+		typeof info.allMessagesText !== "string"
+	)
+		return null;
+
+	const created = new Date(info.created);
+	const modified = new Date(info.modified);
+	if (!Number.isFinite(created.getTime()) || !Number.isFinite(modified.getTime())) return null;
+	return {
+		path: filePath,
+		id,
+		cwd: info.cwd,
+		name: info.name,
+		parentSessionPath: info.parentSessionPath,
+		created,
+		modified,
+		messageCount: info.messageCount,
+		firstMessage: info.firstMessage,
+		allMessagesText: info.allMessagesText,
+	};
+}
+
+// Cache complete listing results without coupling session persistence or the picker to
+// the cache. Copied logs can share an ID, so hits must also match source path and revision.
 async function buildSessionInfo(
 	filePath: string,
 	signal?: AbortSignal,
 	fileStats?: Stats,
 ): Promise<SessionInfo | null> {
+	signal?.throwIfAborted();
+	const revision = getFileRevision(filePath);
+	const id = revision ? readSessionHeaderForDiscovery(filePath)?.id : undefined;
+	const cachePath =
+		id === undefined
+			? undefined
+			: join(
+					getDefaultAgentDir(),
+					"cache",
+					`session-list-v${SESSION_INFO_CACHE_VERSION}`,
+					`${createHash("sha256").update(id).digest("hex")}.json`,
+				);
+	if (cachePath && revision && id !== undefined) {
+		try {
+			const cached = await readCachedSessionInfo(cachePath, filePath, id, revision, signal);
+			signal?.throwIfAborted();
+			if (cached && getFileRevision(filePath) === revision) return cached;
+		} catch {
+			// Cache failures are misses, but cancellation must still reject the listing.
+			signal?.throwIfAborted();
+		}
+	}
+
+	const info = await scanSessionInfo(filePath, signal, fileStats);
+	signal?.throwIfAborted();
+	if (info && cachePath && revision && info.id === id && getFileRevision(filePath) === revision) {
+		const temporaryPath = `${cachePath}.${randomUUID()}.tmp`;
+		try {
+			await mkdir(resolve(cachePath, ".."), { recursive: true, mode: 0o700 });
+			await writeFile(
+				temporaryPath,
+				JSON.stringify({
+					version: SESSION_INFO_CACHE_VERSION,
+					sourcePath: resolvePath(filePath),
+					revision,
+					info,
+				}),
+				{ flag: "wx", mode: 0o600, signal },
+			);
+			signal?.throwIfAborted();
+			await rename(temporaryPath, cachePath);
+		} catch {
+			// A failed cache publication must not discard a successfully scanned session.
+			signal?.throwIfAborted();
+		} finally {
+			await unlink(temporaryPath).catch(() => {});
+		}
+	}
+	signal?.throwIfAborted();
+	return info;
+}
+
+async function scanSessionInfo(filePath: string, signal?: AbortSignal, fileStats?: Stats): Promise<SessionInfo | null> {
 	try {
 		const stats = fileStats ?? (await stat(filePath));
 		let header: SessionHeader | null = null;
