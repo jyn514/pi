@@ -1,16 +1,28 @@
 language js
 
 // Chat models may omit `type`, so a direct comparison with "chat" misses them.
-or {
-	`$model.type === "chat"`,
-	`$model.type !== "chat"`,
-	`$model.type == "chat"`,
-	`$model.type != "chat"`,
-	`"chat" === $model.type`,
-	`"chat" !== $model.type`
-} as $comparison where {
-	register_diagnostic(
-		span = $comparison,
-		message = "Chat models may omit type. Use isModelType(model, 'chat') or getModelType(model) instead of comparing type to 'chat'."
-	)
+file(body = $body) where {
+	// These substrings are necessary for every pattern below. Skip the AST walk otherwise.
+	$body <: includes "chat",
+	$body <: includes "type",
+	$body <: contains and {
+		// Reject other node kinds before trying snippets or allocating local bindings.
+		binary_expression(),
+		// Isolate each occurrence so receivers and diagnostic spans can differ.
+		bubble {
+			or {
+				`$model.type === "chat"`,
+				`$model.type !== "chat"`,
+				`$model.type == "chat"`,
+				`$model.type != "chat"`,
+				`"chat" === $model.type`,
+				`"chat" !== $model.type`
+			} as $comparison where {
+				register_diagnostic(
+					span = $comparison,
+					message = "Chat models may omit type. Use isModelType(model, 'chat') or getModelType(model) instead of comparing type to 'chat'."
+				)
+			}
+		}
+	}
 }
