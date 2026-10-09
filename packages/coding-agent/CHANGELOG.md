@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Fixed standalone Bun builds failing bytecode generation for extension aliases by compiling ES module bytecode.
+
 ## [1.1.0] - 2026-10-07
 
 ### New Features

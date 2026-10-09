@@ -11,6 +11,8 @@ if (!values.outfile) throw new Error("Usage: node scripts/build-coding-agent-bin
 
 const result = spawnSync("bun", [
 	"build", "--compile", "--bytecode",
+	// CommonJS bytecode cannot preserve import.meta.resolve in extension aliases.
+	"--format=esm",
 	// Project preload scripts must not run before Pi starts (#7684).
 	"--no-compile-autoload-bunfig",
 	// Project env files must not leak into Pi's environment (#10473).
