@@ -2,7 +2,7 @@ import { ModelThinkingLevelSchema } from "@earendil-works/pi-ai/providers/model-
 import { type Static, type TSchemaOptions, Type } from "typebox";
 import { SETTINGS_DEFAULTS } from "./settings-defaults.ts";
 
-function nonNegativeSafeInteger(options: { default?: number } = {}) {
+function nonNegativeSafeInteger(options: { default?: number; description?: string } = {}) {
 	return Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER, ...options });
 }
 
@@ -378,6 +378,11 @@ export const SettingsSchema = Type.Object(
 			Type.Union([Type.Literal(0), Type.Literal(1)], {
 				description: "Vertical padding for chat message output.",
 				default: SETTINGS_DEFAULTS.outputPadY,
+			}),
+		),
+		toolPreviewLines: Type.Optional(
+			nonNegativeSafeInteger({
+				description: "Collapsed tool output preview override. Zero hides previews; unset preserves tool defaults.",
 			}),
 		),
 		autocompleteMaxVisible: Type.Optional(

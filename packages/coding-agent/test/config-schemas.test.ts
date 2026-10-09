@@ -228,6 +228,19 @@ describe("generated configuration schemas", () => {
 		expect(schema.properties.outputPadY.default).toBe(SettingsManager.inMemory().getOutputPadY());
 	});
 
+	it("describes the supported collapsed tool preview range", () => {
+		const schema = JSON.parse(renderConfigSchemas().get("schemas/settings.schema.json") ?? "");
+		const validator = Compile(schema);
+		for (const toolPreviewLines of [0, 1, Number.MAX_SAFE_INTEGER]) {
+			expect(validator.Check({ toolPreviewLines })).toBe(true);
+			expect(SettingsManager.inMemory({ toolPreviewLines }).getToolPreviewLines()).toBe(toolPreviewLines);
+		}
+		for (const toolPreviewLines of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, "2", null]) {
+			expect(validator.Check({ toolPreviewLines })).toBe(false);
+		}
+		expect(SettingsManager.inMemory().getToolPreviewLines()).toBeUndefined();
+	});
+
 	it("describes legacy settings migrations accurately", () => {
 		const schema = JSON.parse(renderConfigSchemas().get("schemas/settings.schema.json") ?? "") as {
 			properties: {

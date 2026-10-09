@@ -20,7 +20,13 @@ To include files or images:
 
 ## Follow Pi's work
 
-Pi shows each tool call and result while it works. Press `Ctrl+O` to expand or collapse tool output. Press `Ctrl+T` to show or hide thinking blocks.
+Pi shows each tool call and result while it works.
+Press `Ctrl+O` to expand or collapse tool output.
+To hide collapsed tool-result text previews, set `"toolPreviewLines": 0` in `~/.pi/agent/settings.json` and run `/reload`.
+A positive number sets the result preview length; removing the setting restores tool defaults.
+Write/edit call previews are unaffected.
+See [display settings](settings.md#terminal-and-display) for limits and [configuration](configuration.md) for custom agent directories and project overrides.
+Press `Ctrl+T` to show or hide thinking blocks.
 
 The startup header lists the instructions and resources Pi loaded. The editor border indicates the current thinking level. The footer updates as the model uses context and reports usage.
 

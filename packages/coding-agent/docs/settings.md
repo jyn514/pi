@@ -102,6 +102,7 @@ See [Compaction Reference](compaction.md) for trigger, summarization, and valida
 | `editorPaddingX` | number | `0` | Horizontal editor padding from 0 to 3 cells. |
 | `outputPad` | `0 \| 1` | `1` | Horizontal transcript padding for messages, tool output, `!` command output, and summary blocks. |
 | `outputPadY` | `0 \| 1` | `1` | Vertical padding for chat output and transient status rows. |
+| `toolPreviewLines` | non-negative integer | Tool defaults | Override collapsed text result previews for built-in tools and fallback rendering. `0` hides previews; headers, warnings, and expansion hints remain. Invalid values use tool defaults. |
 | `autocompleteMaxVisible` | number | `5` | Visible autocomplete entries, from 3 to 20. |
 | `showHardwareCursor` | boolean | `false` | Use the terminal cursor instead of Pi's drawn cursor. Pi still positions it for input methods. |
 | `terminal.showImages` | boolean | `true` | Display inline images when supported. |
@@ -115,6 +116,11 @@ See [Compaction Reference](compaction.md) for trigger, summarization, and valida
 | `images.blockImages` | boolean | `false` | Prevent images from being sent to models. |
 | `markdown.codeBlockIndent` | string | `"  "` | Prefix used to indent rendered code blocks. |
 | `markdown.mermaid` | `"off" \| "final" \| "streaming"` | `"streaming"` | Mermaid rendering mode. |
+
+`toolPreviewLines` counts wrapped screen lines for shell results and newline-separated lines for other result previews.
+It does not change write/edit call previews, expanded output, tool results sent to the model, inline images, or manually run `!` commands.
+Custom extension result renderers must honor `options.toolPreviewLines` themselves.
+Run `/reload` after editing settings; existing transcript rows are rebuilt with the new limit.
 
 See [Themes](themes.md) and [Terminal Setup](terminal-setup.md) for format and platform details.
 

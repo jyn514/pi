@@ -470,6 +470,8 @@ export interface ToolRenderResultOptions {
 	expanded: boolean;
 	/** Whether this is a partial/streaming result */
 	isPartial: boolean;
+	/** Collapsed result preview limit; undefined keeps the renderer's default, 0 hides the preview. Expanded output is unaffected. */
+	toolPreviewLines?: number;
 }
 
 /** Context passed to tool renderers. */

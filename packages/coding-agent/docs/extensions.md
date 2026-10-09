@@ -288,6 +288,11 @@ Pi records the initial prompt and tool set in the transcript's first system mess
 
 A tool's `renderCall` and `renderResult` draw its calls in the interactive transcript and in HTML exports. `pi.registerToolRenderer((toolName, next) => renderers)` chooses renderers for calls to any tool, including tools that are not registered yet, such as MCP tools in a resumed session before their server connected. `next()` returns what the remaining resolvers (in extension load order), then the registered tool, would use, so `next() ?? mine` only fills in.
 
+Result renderers receive `options.toolPreviewLines`, an optional non-negative integer from the [display settings](settings.md#terminal-and-display).
+When collapsed, use it instead of your default result preview length; `0` hides the preview but should retain warnings and an expansion hint.
+Tool-call rendering and expanded output are unaffected.
+Pi does not clip custom renderers automatically.
+
 ### MCP servers
 
 `pi.registerMcpServer(name, config)` adds an MCP server for the current session. `config` has the shape of an `mcpServers` entry in [`mcp.json`](mcp.md): `command`, `args`, `env`, and `cwd` for stdio servers, `url`, `headers`, and `oauth` for HTTP servers, plus `exposure`, `toolExposure`, `description`, `enabled`, and `timeout`.
