@@ -85,9 +85,7 @@ export class ToolExecutionComponent extends Container {
 		this.ui = ui;
 		this.cwd = cwd;
 
-		if (this.outputPadY > 0) {
-			this.addChild(new Spacer(this.outputPadY));
-		}
+		this.addChild(new Spacer(this.outputPadY));
 
 		// Always create all shell variants. contentBox is used for default renderer-based composition.
 		// selfRenderContainer is used when the tool renders its own framing.

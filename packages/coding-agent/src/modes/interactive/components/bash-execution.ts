@@ -42,9 +42,7 @@ export class BashExecutionComponent extends Container {
 		const borderColor = (str: string) => theme.fg(this.colorKey, str);
 
 		// Add spacer
-		if (this.outputPadY > 0) {
-			this.addChild(new Spacer(this.outputPadY));
-		}
+		this.addChild(new Spacer(this.outputPadY));
 
 		// Top border
 		this.addChild(new DynamicBorder(borderColor));

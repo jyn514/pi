@@ -47,9 +47,7 @@ export class CompactionSummaryMessageComponent extends Box {
 		const tokenStr = this.message.tokensBefore.toLocaleString();
 		const label = theme.fg("customMessageLabel", `\x1b[1m[compaction]\x1b[22m`);
 		content.addChild(new Text(label, 0, 0));
-		if (this.outputPadY > 0) {
-			content.addChild(new Spacer(this.outputPadY));
-		}
+		content.addChild(new Spacer(this.outputPadY));
 
 		if (this.expanded) {
 			const header = `**Compacted from ${tokenStr} tokens**${this.outputPadY > 0 ? "\n\n" : "  \n"}`;

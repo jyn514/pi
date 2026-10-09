@@ -46,9 +46,7 @@ export class BranchSummaryMessageComponent extends Box {
 
 		const label = theme.fg("customMessageLabel", `\x1b[1m[branch]\x1b[22m`);
 		content.addChild(new Text(label, 0, 0));
-		if (this.outputPadY > 0) {
-			content.addChild(new Spacer(this.outputPadY));
-		}
+		content.addChild(new Spacer(this.outputPadY));
 
 		if (this.expanded) {
 			const header = `**Branch Summary**${this.outputPadY > 0 ? "\n\n" : "  \n"}`;
