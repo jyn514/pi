@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- Fixed standalone Bun builds failing bytecode generation for extension aliases by compiling ES module bytecode.
 - Fixed compaction and branch summaries failing with "generation hit the token cap" when reasoning used most of the fixed summary output limit. Summaries now use the model's output limit, and `compaction.reserveTokens` only controls when compaction starts ([#9512](https://github.com/earendil-works/pi/issues/9512), [#9075](https://github.com/earendil-works/pi/issues/9075)).
 - Fixed `models.schema.json` missing descriptions for provider and model fields, so editors showed no hints for them ([#10790](https://github.com/earendil-works/pi/issues/10790))
 - Fixed normal session completion skipping `agent_before_settle` handlers and RPC prompts cancelled during preflight receiving no response.

@@ -174,7 +174,7 @@ If a container or package build already prepares the workspace and copies runtim
 node scripts/build-coding-agent-binary.mjs --outfile packages/coding-agent/dist/pi
 ```
 
-The driver requires built workspace packages and Bun (tested with 1.3.14). It embeds bytecode and the image worker, sets standalone build identity, and rejects bytecode generation failures even when Bun exits zero. Pass `--target bun-linux-x64-baseline` to cross-compile; output paths are relative to your working directory.
+The driver requires built workspace packages and Bun (tested with 1.3.14). It compiles ES module bytecode so extension aliases retain `import.meta.resolve`, embeds the image and codemode workers, sets standalone build identity, and rejects bytecode generation failures even when Bun exits zero. Pass `--target bun-linux-x64-baseline` to cross-compile; output paths are relative to your working directory.
 
 Copy runtime assets and smoke-test the native binary outside the checkout:
 
