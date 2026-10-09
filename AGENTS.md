@@ -14,6 +14,7 @@
 
 ## Code Quality
 
+- Preserve upstream file paths and helper placement unless a fork feature requires changing them.
 - Read files in full before wide-ranging changes. Do not rely on search snippets for broad changes.
 - No `any` unless absolutely necessary.
 - Inline single-line helpers that have only one call site.
