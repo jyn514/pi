@@ -717,12 +717,12 @@ describe("ToolExecutionComponent parity", () => {
 		expect(rendered).toContain(theme.fg("toolOutput", error));
 	});
 
-	test("expands a collapsed tool result when clicked", () => {
+	test.each([0, 1] as const)("expands a collapsed tool result when clicked with padding %i", (outputPadY) => {
 		const component = new ToolExecutionComponent(
 			"read",
 			"tool-click-expand",
 			{ path: "notes.txt" },
-			{},
+			{ outputPadY },
 			createReadToolDefinition(process.cwd()),
 			createFakeTui(),
 			process.cwd(),

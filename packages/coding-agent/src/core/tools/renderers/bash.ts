@@ -13,12 +13,22 @@ import { VisualLinePreview } from "../../../modes/interactive/components/visual-
 import { theme } from "../../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../../extensions/types.ts";
 import type { BashToolDetails } from "../bash.ts";
-import { formatDuration } from "../format-duration.ts";
 import { getTextOutput, invalidArgText, str } from "../render-utils.ts";
 import { DEFAULT_MAX_BYTES, formatSize } from "../truncate.ts";
 
 const BASH_PREVIEW_LINES = 5;
 export const BASH_UPDATE_THROTTLE_MS = 100;
+function formatDuration(ms: number): string {
+	const seconds = ms / 1000;
+	if (seconds < 60) return `${seconds.toFixed(1)}s`;
+
+	const totalSeconds = Math.floor(seconds);
+	const minutes = Math.floor(totalSeconds / 60);
+	const remainder = totalSeconds % 60;
+	if (minutes < 60) return `${minutes}m ${remainder}s`;
+
+	return `${Math.floor(minutes / 60)}h ${minutes % 60}m ${remainder}s`;
+}
 
 export type BashRenderState = {
 	startedAt: number | undefined;
@@ -67,9 +77,7 @@ function rebuildBashResultRenderComponent(
 		if (options.expanded) {
 			component.addChild(new Text(`${outputPadY > 0 ? "\n" : ""}${styledOutput}`, 0, 0));
 		} else {
-			if (outputPadY > 0) {
-				component.addChild(new Spacer(outputPadY));
-			}
+			component.addChild(new Spacer(outputPadY));
 			component.addChild(
 				new VisualLinePreview({
 					text: styledOutput,

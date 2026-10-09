@@ -60,9 +60,7 @@ export class CustomMessageComponent extends Container {
 
 	private rebuild(): void {
 		this.clear();
-		if (this.outputPadY > 0) {
-			this.addChild(new Spacer(this.outputPadY));
-		}
+		this.addChild(new Spacer(this.outputPadY));
 
 		// Try custom renderer first - it handles its own styling
 		if (this.customRenderer) {
@@ -89,9 +87,7 @@ export class CustomMessageComponent extends Container {
 		// Default rendering: label + content
 		const label = theme.fg("customMessageLabel", `\x1b[1m[${this.message.customType}]\x1b[22m`);
 		box.addChild(new Text(label, 0, 0));
-		if (this.outputPadY > 0) {
-			box.addChild(new Spacer(this.outputPadY));
-		}
+		box.addChild(new Spacer(this.outputPadY));
 
 		// Extract text content
 		let text: string;

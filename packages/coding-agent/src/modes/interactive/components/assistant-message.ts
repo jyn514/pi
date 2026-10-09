@@ -109,7 +109,7 @@ export class AssistantMessageComponent extends Container {
 			(c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()),
 		);
 
-		if (hasVisibleContent && this.outputPadY > 0) {
+		if (hasVisibleContent) {
 			this.contentContainer.addChild(new Spacer(this.outputPadY));
 		}
 
@@ -180,7 +180,7 @@ export class AssistantMessageComponent extends Container {
 						return { handled: true };
 					}),
 				);
-				if (hasVisibleContentAfter && this.outputPadY > 0) {
+				if (hasVisibleContentAfter) {
 					this.contentContainer.addChild(new Spacer(this.outputPadY));
 				}
 			}
@@ -192,9 +192,7 @@ export class AssistantMessageComponent extends Container {
 		const hasToolCalls = message.content.some((c) => c.type === "toolCall");
 		this.hasToolCalls = hasToolCalls;
 		if (message.stopReason === "length") {
-			if (this.outputPadY > 0) {
-				this.contentContainer.addChild(new Spacer(this.outputPadY));
-			}
+			this.contentContainer.addChild(new Spacer(this.outputPadY));
 			this.contentContainer.addChild(
 				new Text(theme.fg("error", "Response was truncated before completion."), this.outputPad, 0),
 			);
@@ -204,15 +202,11 @@ export class AssistantMessageComponent extends Container {
 					message.errorMessage && message.errorMessage !== "Request was aborted"
 						? message.errorMessage
 						: "Operation aborted";
-				if (this.outputPadY > 0) {
-					this.contentContainer.addChild(new Spacer(this.outputPadY));
-				}
+				this.contentContainer.addChild(new Spacer(this.outputPadY));
 				this.contentContainer.addChild(new Text(theme.fg("error", abortMessage), this.outputPad, 0));
 			} else if (message.stopReason === "error") {
 				const errorMsg = message.errorMessage || "Unknown error";
-				if (this.outputPadY > 0) {
-					this.contentContainer.addChild(new Spacer(this.outputPadY));
-				}
+				this.contentContainer.addChild(new Spacer(this.outputPadY));
 				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), this.outputPad, 0));
 			}
 		}
