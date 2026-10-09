@@ -76,12 +76,21 @@ function rebuildBashResultRenderComponent(
 
 		if (options.expanded) {
 			component.addChild(new Text(`${outputPadY > 0 ? "\n" : ""}${styledOutput}`, 0, 0));
+		} else if (options.toolPreviewLines === 0) {
+			// Do not construct VisualLinePreview: keeping the last zero lines would use slice(-0).
+			component.addChild(
+				new Text(
+					`${outputPadY > 0 ? "\n" : ""}${theme.fg("muted", "... (output hidden,")} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`,
+					0,
+					0,
+				),
+			);
 		} else {
 			component.addChild(new Spacer(outputPadY));
 			component.addChild(
 				new VisualLinePreview({
 					text: styledOutput,
-					maxVisualLines: BASH_PREVIEW_LINES,
+					maxVisualLines: options.toolPreviewLines ?? BASH_PREVIEW_LINES,
 					keep: "end",
 					formatHint: (hidden) =>
 						theme.fg("muted", `... (${hidden} earlier lines,`) +

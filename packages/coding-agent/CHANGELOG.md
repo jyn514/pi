@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `toolPreviewLines` to control collapsed tool-result previews; `0` hides previews while retaining expansion, warnings, and tool headers. Write/edit call previews are unchanged.
+
 ### Fixed
 
 - Fixed standalone Bun builds failing bytecode generation for extension aliases by compiling ES module bytecode.

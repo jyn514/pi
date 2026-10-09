@@ -27,6 +27,7 @@ export interface ToolExecutionOptions {
 	imageWidthCells?: number;
 	outputPad?: number;
 	outputPadY?: 0 | 1;
+	toolPreviewLines?: number;
 }
 
 export class ToolExecutionComponent extends Container {
@@ -50,6 +51,7 @@ export class ToolExecutionComponent extends Container {
 	private imageWidthCells: number;
 	private outputPad: number;
 	private outputPadY: 0 | 1;
+	private toolPreviewLines: number | undefined;
 	private isPartial = true;
 	private toolDefinition?: ToolRenderers;
 	private ui: TUI;
@@ -82,6 +84,7 @@ export class ToolExecutionComponent extends Container {
 		this.imageWidthCells = options.imageWidthCells ?? 60;
 		this.outputPad = options.outputPad ?? 1;
 		this.outputPadY = options.outputPadY ?? 1;
+		this.toolPreviewLines = options.toolPreviewLines;
 		this.ui = ui;
 		this.cwd = cwd;
 
@@ -154,14 +157,18 @@ export class ToolExecutionComponent extends Container {
 			return undefined;
 		}
 
+		return new Text(this.formatResultFallback(output), 0, 0);
+	}
+
+	private formatResultFallback(output: string): string {
 		const lines = output.split("\n");
-		const displayLines = this.expanded ? lines : lines.slice(0, FALLBACK_PREVIEW_LINES);
+		const displayLines = this.expanded ? lines : lines.slice(0, this.toolPreviewLines ?? FALLBACK_PREVIEW_LINES);
 		const remaining = lines.length - displayLines.length;
 		let text = displayLines.map((line) => theme.fg("toolOutput", line)).join("\n");
 		if (remaining > 0) {
 			text += `${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
 		}
-		return new Text(text, 0, 0);
+		return text;
 	}
 
 	private createResultRegion(component: Component): MouseRegion {
@@ -320,7 +327,7 @@ export class ToolExecutionComponent extends Container {
 					try {
 						const component = resultRenderer(
 							{ content: this.result.content as any, details: this.result.details },
-							{ expanded: this.expanded, isPartial: this.isPartial },
+							{ expanded: this.expanded, isPartial: this.isPartial, toolPreviewLines: this.toolPreviewLines },
 							theme,
 							this.getRenderContext(this.resultRendererComponent),
 						);
@@ -408,7 +415,7 @@ export class ToolExecutionComponent extends Container {
 		}
 		const output = this.getTextOutput();
 		if (output) {
-			text += `\n${output}`;
+			text += `\n${this.toolPreviewLines === undefined ? output : this.formatResultFallback(output)}`;
 		}
 		return text;
 	}
