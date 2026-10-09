@@ -5,6 +5,7 @@
 ### Fixed
 
 - Fixed standalone Bun builds failing bytecode generation for extension aliases by compiling ES module bytecode.
+- Fixed native text reads allocating entire files before offset and output limits were applied, including oversized single lines.
 
 ## [1.1.0] - 2026-10-07
 
