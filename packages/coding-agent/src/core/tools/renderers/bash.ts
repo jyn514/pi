@@ -60,9 +60,7 @@ function rebuildBashResultRenderComponent(
 		if (options.expanded) {
 			component.addChild(new Text(`${outputPadY > 0 ? "\n" : ""}${styledOutput}`, 0, 0));
 		} else {
-			if (outputPadY > 0) {
-				component.addChild(new Spacer(outputPadY));
-			}
+			component.addChild(new Spacer(outputPadY));
 			component.addChild(
 				new VisualLinePreview({
 					text: styledOutput,

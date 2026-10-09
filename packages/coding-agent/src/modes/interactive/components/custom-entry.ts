@@ -70,9 +70,7 @@ export class CustomEntryComponent extends Container {
 		}
 
 		this.customComponent = component;
-		if (this.outputPadY > 0) {
-			this.addChild(new Spacer(this.outputPadY));
-		}
+		this.addChild(new Spacer(this.outputPadY));
 		this.addChild(component);
 	}
 }
