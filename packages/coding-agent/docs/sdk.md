@@ -105,6 +105,10 @@ Each boundary can be supplied explicitly:
 - `resourceLoader` supplies extensions, skills, prompt templates, themes, and context files.
 - `tools`, `noTools`, `excludeTools`, and `customTools` control the active tool set.
 
+The built-in `read` tool streams local text with bounded memory, including oversized lines. It still scans to EOF to report exact line counts and truncation totals. Image reads remain whole-buffer.
+
+Custom `ReadOperations` can provide `readChunks(path, signal)`, an async iterable of byte chunks. Honor cancellation and release resources when the iterator finishes or closes. Each call must open a fresh source: negative EOF-relative limits can require a second scan. Without `readChunks`, text uses the existing whole-buffer `readFile` fallback; that adapter's allocation is not bounded. See the [operation declarations](../src/core/tools/read.ts).
+
 Use `DefaultResourceLoader` when you want standard discovery with selected overrides. Supply a custom `ResourceLoader` when the host owns resource storage and discovery completely.
 
 <a id="inlineextension"></a>
