@@ -2832,6 +2832,11 @@ Nested calls do not add transcript entries: their results only reach the calling
 
 The `usage` of nested results, at every depth, is added to the calling tool's result `usage`, so a tool reports only its own usage, not that of the tools it called.
 
+Result renderers receive `options.toolPreviewLines`, an optional non-negative integer from the [display settings](settings.md#terminal-and-display).
+When collapsed, use it instead of your default result preview length; `0` hides the preview but should retain warnings and an expansion hint.
+Tool-call rendering and expanded output are unaffected.
+Pi does not clip custom renderers automatically.
+
 ## MCP Servers
 
 `pi.registerMcpServer(name, config)` adds an MCP server for the current session. `config` has the shape of an `mcpServers` entry in [`mcp.json`](mcp.md): `command`, `args`, `env`, and `cwd` for stdio servers, `url`, `headers`, and `oauth` for HTTP servers, plus `exposure`, `toolExposure`, `description`, `enabled`, and `timeout`.

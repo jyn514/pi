@@ -43,7 +43,7 @@ function formatFindResult(
 	let text = "";
 	if (output) {
 		const lines = output.split("\n");
-		const maxLines = options.expanded ? lines.length : 20;
+		const maxLines = options.expanded ? lines.length : (options.toolPreviewLines ?? 20);
 		const displayLines = lines.slice(0, maxLines);
 		const remaining = lines.length - maxLines;
 		text += `\n${displayLines.map((line) => theme.fg("toolOutput", line)).join("\n")}`;

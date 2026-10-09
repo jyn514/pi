@@ -1429,6 +1429,11 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getToolPreviewLines(): number | undefined {
+		const lines = this.settings.toolPreviewLines;
+		return typeof lines === "number" && Number.isSafeInteger(lines) && lines >= 0 ? lines : undefined;
+	}
+
 	getAutocompleteMaxVisible(): number {
 		return this.settings.autocompleteMaxVisible ?? SETTINGS_DEFAULTS.autocompleteMaxVisible;
 	}
