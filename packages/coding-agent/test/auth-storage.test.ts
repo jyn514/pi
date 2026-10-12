@@ -116,13 +116,19 @@ describe("AuthStorage", () => {
 	test("keeps a coalesced reload alive while another credential reader is waiting", async () => {
 		writeAuthJson({ anthropic: { type: "api_key", key: "old" } });
 		const storage = AuthStorage.create(authJsonPath);
-		writeAuthJson({ anthropic: { type: "api_key", key: "new" } });
+		// Change the size as well as the content so reload does not depend on timestamp precision.
+		writeAuthJson({ anthropic: { type: "api_key", key: "new-key" } });
 		let grantLock: (() => void) | undefined;
 		const lockGranted = new Promise<void>((resolve) => {
 			grantLock = resolve;
 		});
+		let notifyLockRequested: (() => void) | undefined;
+		const lockRequested = new Promise<void>((resolve) => {
+			notifyLockRequested = resolve;
+		});
 		const release = vi.fn(async () => {});
 		const lockSpy = vi.spyOn(lockfile, "lock").mockImplementation(async () => {
+			notifyLockRequested?.();
 			await lockGranted;
 			return release;
 		});
@@ -131,10 +137,12 @@ describe("AuthStorage", () => {
 		const first = storage.read("anthropic", { signal: firstController.signal });
 		const second = storage.read("anthropic", { signal: secondController.signal });
 
+		await lockRequested;
+		expect(lockSpy).toHaveBeenCalledTimes(1);
 		firstController.abort();
 		await expect(first).rejects.toMatchObject({ name: "AbortError" });
 		grantLock?.();
-		await expect(second).resolves.toEqual({ type: "api_key", key: "new" });
+		await expect(second).resolves.toEqual({ type: "api_key", key: "new-key" });
 		expect(lockSpy).toHaveBeenCalledTimes(1);
 		expect(release).toHaveBeenCalledTimes(1);
 	});
