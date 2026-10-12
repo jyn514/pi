@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { McpClient, StdioTransport } from "../src/index.ts";
@@ -22,6 +23,25 @@ async function waitFor(condition: () => boolean, timeoutMs = 2_000): Promise<boo
 		await new Promise((resolve) => setTimeout(resolve, 10));
 	}
 	return true;
+}
+
+function isProcessRunning(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+		throw error;
+	}
+	if (process.platform !== "linux") return true;
+	try {
+		const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+		// kill(pid, 0) also succeeds for zombies awaiting reaping by the host's PID 1.
+		// The command name can contain spaces or parentheses; the state follows its final ')'.
+		return stat.slice(stat.lastIndexOf(")") + 2)[0] !== "Z";
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+		throw error;
+	}
 }
 
 describe("StdioTransport", () => {
@@ -63,20 +83,17 @@ describe("StdioTransport", () => {
 				else await new Promise((resolve) => setTimeout(resolve, 10));
 			}
 			expect(grandchild).toBeTypeOf("number");
+			expect(isProcessRunning(grandchild as number)).toBe(true);
 
 			const startedAt = Date.now();
 			await client.close();
 			expect(Date.now() - startedAt).toBeLessThan(5_000);
-			let alive = true;
-			for (let i = 0; i < 100 && alive; i++) {
-				try {
-					process.kill(grandchild as number, 0);
-					await new Promise((resolve) => setTimeout(resolve, 20));
-				} catch {
-					alive = false;
-				}
+			let running = isProcessRunning(grandchild as number);
+			for (let i = 0; i < 100 && running; i++) {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+				running = isProcessRunning(grandchild as number);
 			}
-			expect(alive).toBe(false);
+			expect(running).toBe(false);
 		},
 		10_000,
 	);
