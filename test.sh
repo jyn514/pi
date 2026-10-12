@@ -63,8 +63,8 @@ test_env=(
 	"AWS_EC2_METADATA_DISABLED=true"
 )
 
-# Native Windows needs these inherited values to launch child processes.
-for name in SystemRoot SYSTEMROOT WINDIR COMSPEC PATHEXT; do
+# Preserve platform launch settings, including the sandbox ripgrep wrapper's backend.
+for name in SystemRoot SYSTEMROOT WINDIR COMSPEC PATHEXT RG_REAL; do
 	value="${!name-}"
 	[[ -z "$value" ]] || test_env+=("$name=$value")
 done
