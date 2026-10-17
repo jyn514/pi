@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added retained initial/selected inputs and `Agent.takeQueuedMessages()` for complete transfer with lane order and polling modes.
+- Added `Agent.markInputRecorded()` and `Agent.hasUnrecordedInputs()` for transcript ownership and recovery after input-recording failures.
+
 ## [1.3.0] - 2026-10-15
 
 ## [1.2.0] - 2026-10-12

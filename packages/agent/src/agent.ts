@@ -140,15 +140,21 @@ export interface AgentOptions {
 	toolExecution?: ToolExecutionMode;
 }
 
+type RetainedInput = {
+	message: AgentMessage;
+	lane: "initial" | "steering" | "followUp";
+	selected: boolean;
+};
+
 class PendingMessageQueue {
-	private messages: AgentMessage[] = [];
+	private messages: RetainedInput[] = [];
 	public mode: QueueMode;
 
 	constructor(mode: QueueMode) {
 		this.mode = mode;
 	}
 
-	enqueue(message: AgentMessage): void {
+	enqueue(message: RetainedInput): void {
 		this.messages.push(message);
 	}
 
@@ -156,13 +162,13 @@ class PendingMessageQueue {
 		return this.messages.length > 0;
 	}
 
-	peek(): AgentMessage[] {
+	peek(): RetainedInput[] {
 		if (this.mode === "all") return this.messages.slice();
 		const first = this.messages[0];
 		return first ? [first] : [];
 	}
 
-	drain(): AgentMessage[] {
+	drain(): RetainedInput[] {
 		const drained = this.peek();
 		this.messages = this.messages.slice(drained.length);
 		return drained;
@@ -190,6 +196,9 @@ export class Agent {
 	private readonly listeners = new Set<(event: AgentEvent, signal: AbortSignal) => Promise<void> | void>();
 	private readonly steeringQueue: PendingMessageQueue;
 	private readonly followUpQueue: PendingMessageQueue;
+	private retainedInputs: RetainedInput[] = [];
+	private inputBatches = new WeakMap<AgentMessage[], RetainedInput[]>();
+	private recordingInput?: { message: AgentMessage; input: RetainedInput };
 
 	public convertToLlm: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
 	public transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
@@ -297,22 +306,24 @@ export class Agent {
 
 	/** Queue a message to be injected after the current assistant turn finishes. */
 	steer(message: AgentMessage): void {
-		this.steeringQueue.enqueue(message);
+		this.steeringQueue.enqueue(this.retainInput(message, "steering"));
 	}
 
 	/** Queue a message to run only after the agent would otherwise stop. */
 	followUp(message: AgentMessage): void {
-		this.followUpQueue.enqueue(message);
+		this.followUpQueue.enqueue(this.retainInput(message, "followUp"));
 	}
 
 	/** Remove all queued steering messages. */
 	clearSteeringQueue(): void {
 		this.steeringQueue.clear();
+		this.retainedInputs = this.retainedInputs.filter((input) => input.lane !== "steering");
 	}
 
 	/** Remove all queued follow-up messages. */
 	clearFollowUpQueue(): void {
 		this.followUpQueue.clear();
+		this.retainedInputs = this.retainedInputs.filter((input) => input.lane !== "followUp");
 	}
 
 	/** Remove all queued steering and follow-up messages. */
@@ -329,7 +340,51 @@ export class Agent {
 	/** Preview the messages selected for the next turn without consuming them. */
 	peekQueuedMessages(): AgentMessage[] {
 		const steering = this.steeringQueue.peek();
-		return steering.length > 0 ? steering : this.followUpQueue.peek();
+		return (steering.length > 0 ? steering : this.followUpQueue.peek()).map(({ message }) => message);
+	}
+
+	/** True for retained initial/selected input, excluding ordinary still-queued entries. */
+	hasUnrecordedInputs(): boolean {
+		return this.retainedInputs.some((input) => input.selected);
+	}
+
+	/**
+	 * Acknowledge only the current message_end occurrence after its transcript entry is buffered.
+	 * Repeated acknowledgments and default completion cannot retire another occurrence.
+	 */
+	markInputRecorded(message: AgentMessage): void {
+		if (this.recordingInput?.message !== message) return;
+		const { input } = this.recordingInput;
+		this.retainedInputs = this.retainedInputs.filter((retained) => retained !== input);
+	}
+
+	/**
+	 * Transfer all retained pending input in source-lane order, regardless of queue mode.
+	 * Includes initial and selected-but-unrecorded input. Requires a stopped run.
+	 */
+	takeQueuedMessages(): {
+		initial: AgentMessage[];
+		steering: AgentMessage[];
+		followUp: AgentMessage[];
+		steeringMode: QueueMode;
+		followUpMode: QueueMode;
+	} {
+		if (this.activeRun)
+			throw new Error("Agent is already processing. Wait for completion before transferring inputs.");
+		const messagesIn = (lane: RetainedInput["lane"]) =>
+			this.retainedInputs.filter((input) => input.lane === lane).map(({ message }) => message);
+		const pending = {
+			initial: messagesIn("initial"),
+			steering: messagesIn("steering"),
+			followUp: messagesIn("followUp"),
+			steeringMode: this.steeringMode,
+			followUpMode: this.followUpMode,
+		};
+		this.steeringQueue.clear();
+		this.followUpQueue.clear();
+		this.retainedInputs = [];
+		this.inputBatches = new WeakMap();
+		return pending;
 	}
 
 	/** Active abort signal for the current run, if any. */
@@ -365,6 +420,8 @@ export class Agent {
 		this._state.errorMessage = undefined;
 		this.clearFollowUpQueue();
 		this.clearSteeringQueue();
+		this.retainedInputs = [];
+		this.inputBatches = new WeakMap();
 	}
 
 	/** Start a new prompt from text, a single message, or a batch of messages. */
@@ -377,7 +434,7 @@ export class Agent {
 			);
 		}
 		const messages = this.normalizePromptInput(input, images);
-		await this.runPromptMessages(messages);
+		await this.runPromptMessages(messages.map((message) => this.retainInput(message, "initial")));
 	}
 
 	/** Continue from the current transcript. The last message must be a user or tool-result message. */
@@ -429,16 +486,29 @@ export class Agent {
 		return [{ role: "user", content, timestamp: Date.now() }];
 	}
 
+	private retainInput(message: AgentMessage, lane: RetainedInput["lane"]): RetainedInput {
+		const input = { message, lane, selected: false };
+		this.retainedInputs.push(input);
+		return input;
+	}
+
+	private selectInputs(inputs: RetainedInput[]): AgentMessage[] {
+		for (const input of inputs) input.selected = true;
+		const messages = inputs.map(({ message }) => message);
+		this.inputBatches.set(messages, inputs);
+		return messages;
+	}
+
 	private async runPromptMessages(
-		messages: AgentMessage[],
+		inputs: RetainedInput[],
 		options: { skipInitialSteeringPoll?: boolean } = {},
 	): Promise<void> {
 		await this.runWithLifecycle(async (signal) => {
 			await runAgentLoop(
-				messages,
+				this.selectInputs(inputs),
 				this.createContextSnapshot(),
 				this.createLoopConfig(options),
-				(event) => this.processEvents(event),
+				(event, source) => this.processEvents(event, source),
 				signal,
 				this.streamFunction,
 			);
@@ -450,7 +520,7 @@ export class Agent {
 			await runAgentLoopContinue(
 				this.createContextSnapshot(),
 				this.createLoopConfig(),
-				(event) => this.processEvents(event),
+				(event, source) => this.processEvents(event, source),
 				signal,
 				this.streamFunction,
 			);
@@ -498,9 +568,9 @@ export class Agent {
 					skipInitialSteeringPoll = false;
 					return [];
 				}
-				return this.steeringQueue.drain();
+				return this.selectInputs(this.steeringQueue.drain());
 			},
-			getFollowUpMessages: async () => this.followUpQueue.drain(),
+			getFollowUpMessages: async () => this.selectInputs(this.followUpQueue.drain()),
 		};
 	}
 
@@ -562,7 +632,7 @@ export class Agent {
 	 * considered idle later, after all awaited listeners for `agent_end` finish
 	 * and `finishRun()` clears runtime-owned state.
 	 */
-	private async processEvents(event: AgentEvent): Promise<void> {
+	private async processEvents(event: AgentEvent, source?: { messages: AgentMessage[]; index: number }): Promise<void> {
 		switch (event.type) {
 			case "message_start":
 				this._state.streamingMessage = event.message;
@@ -606,8 +676,17 @@ export class Agent {
 		if (!signal) {
 			throw new Error("Agent listener invoked outside active run");
 		}
-		for (const listener of this.listeners) {
-			await listener(event, signal);
+		const input = source && this.inputBatches.get(source.messages)?.[source.index];
+		this.recordingInput = event.type === "message_end" && input ? { message: event.message, input } : undefined;
+		try {
+			for (const listener of this.listeners) {
+				await listener(event, signal);
+			}
+			// Standalone Agents commit only after every observer succeeds. Session owners
+			// may acknowledge earlier, at their buffering boundary, even if a write fails.
+			if (event.type === "message_end") this.markInputRecorded(event.message);
+		} finally {
+			this.recordingInput = undefined;
 		}
 	}
 }

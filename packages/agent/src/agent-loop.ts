@@ -29,7 +29,11 @@ import type {
 	StreamFn,
 } from "./types.ts";
 
-export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
+/** Internal source association survives tool-declaration clones and synthetic messages. */
+export type AgentEventSink = (
+	event: AgentEvent,
+	source?: { messages: AgentMessage[]; index: number },
+) => Promise<void> | void;
 
 /**
  * Start an agent loop with a new prompt message.
@@ -107,7 +111,8 @@ export async function runAgentLoop(
 	signal: AbortSignal | undefined,
 	streamFn: StreamFn,
 ): Promise<AgentMessage[]> {
-	const initialMessages = declareToolChanges(context, prompts);
+	const initialInputs = declareToolChanges(context, [prompts]);
+	const initialMessages = initialInputs.map(({ message }) => message);
 	const newMessages: AgentMessage[] = [...initialMessages];
 	const currentContext: AgentContext = {
 		...context,
@@ -116,9 +121,9 @@ export async function runAgentLoop(
 
 	await emit({ type: "agent_start" });
 	await emit({ type: "turn_start" });
-	for (const message of initialMessages) {
+	for (const { message, source } of initialInputs) {
 		await emit({ type: "message_start", message });
-		await emit({ type: "message_end", message });
+		await emit({ type: "message_end", message }, source);
 	}
 
 	await runLoop(currentContext, newMessages, config, signal, emit, streamFn ?? getDefaultStreamFn());
@@ -208,9 +213,9 @@ async function runLoop(
 			}
 
 			// Process prepared and queued messages before the next assistant response.
-			for (const message of declareToolChanges(currentContext, [...preparedMessages, ...pendingMessages])) {
+			for (const { message, source } of declareToolChanges(currentContext, [preparedMessages, pendingMessages])) {
 				await emit({ type: "message_start", message });
-				await emit({ type: "message_end", message });
+				await emit({ type: "message_end", message }, source);
 				currentContext.messages.push(message);
 				newMessages.push(message);
 			}
@@ -330,7 +335,14 @@ async function runLoop(
  * the executable set, so replay always yields exactly `context.tools`. Otherwise a new
  * system message is inserted before the first non-system pending message.
  */
-function declareToolChanges(context: AgentContext, pendingMessages: AgentMessage[]): AgentMessage[] {
+function declareToolChanges(
+	context: AgentContext,
+	batches: AgentMessage[][],
+): { message: AgentMessage; source?: { messages: AgentMessage[]; index: number } }[] {
+	const inputs = batches.flatMap((messages) =>
+		messages.map((message, index) => ({ message, source: { messages, index } })),
+	);
+	const pendingMessages = inputs.map(({ message }) => message);
 	let systemIndex = -1;
 	for (let i = pendingMessages.length - 1; i >= 0; i--) {
 		if (pendingMessages[i].role === "system") {
@@ -352,14 +364,16 @@ function declareToolChanges(context: AgentContext, pendingMessages: AgentMessage
 
 	if (pending) {
 		// Keep the caller's message object when it already declares no tool changes.
-		if (unchanged && !pending.toolsAdded?.length && !pending.toolsRemoved?.length) return pendingMessages;
-		return baseline.map((message, index) => (index === systemIndex ? withToolChanges(pending, changes) : message));
+		if (unchanged && !pending.toolsAdded?.length && !pending.toolsRemoved?.length) return inputs;
+		return inputs.map((input, index) =>
+			index === systemIndex ? { ...input, message: withToolChanges(pending, changes) } : input,
+		);
 	}
-	if (unchanged) return pendingMessages;
+	if (unchanged) return inputs;
 	const update = withToolChanges({ role: "system", content: "", timestamp: Date.now() }, changes);
 	const insertIndex = pendingMessages.findIndex((message) => message.role !== "system");
 	const index = insertIndex === -1 ? pendingMessages.length : insertIndex;
-	return [...pendingMessages.slice(0, index), update, ...pendingMessages.slice(index)];
+	return [...inputs.slice(0, index), { message: update }, ...inputs.slice(index)];
 }
 
 const NO_CHANGES: ToolStateChanges = { toolsAdded: [], toolsRemoved: [] };

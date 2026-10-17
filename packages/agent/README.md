@@ -412,7 +412,41 @@ agent.clearFollowUpQueue();
 agent.clearAllQueues();
 ```
 
-Use clearSteeringQueue, clearFollowUpQueue, or clearAllQueues to drop queued messages.
+Use `clearSteeringQueue()`, `clearFollowUpQueue()`, or `clearAllQueues()` to discard queued and selected-but-unrecorded inputs in those lanes.
+`reset()` also discards retained initial input.
+Ending or aborting a run does not discard unrecorded input.
+
+### Retained input and ownership transfer
+
+`Agent` retains each initial prompt batch member (including attached asides), steering occurrence, and follow-up occurrence until recorded or explicitly discarded/transferred.
+Enqueuing the same message object multiple times creates distinct occurrences.
+Queue selection preserves this ownership without changing normal polling or `peekQueuedMessages()` behavior.
+`hasQueuedMessages()` reports only still-queued work; `hasUnrecordedInputs()` reports retained initial/selected work, excluding ordinary still-queued entries.
+After an input-recording failure, session owners should use this inspection to stop automatic retry/queue continuation until the retained work is resolved.
+
+Stop the run before transferring ownership:
+
+```typescript
+agent.abort();
+await agent.waitForIdle();
+const pending = agent.takeQueuedMessages();
+// { initial: AgentMessage[], steering: AgentMessage[], followUp: AgentMessage[],
+//   steeringMode: QueueMode, followUpMode: QueueMode }
+```
+
+`takeQueuedMessages()` throws while a run is active, including during awaited `agent_end` listeners.
+It exports all retained input, including unattempted initial batch tails and selected-but-unrecorded queue members, regardless of queue mode.
+Each lane preserves source order and original message objects, even when tool declarations clone a system message for emission.
+Synthetic tool-declaration messages are not retained input.
+The operation clears all Agent pending ownership; a second transfer is empty.
+This is private in-memory retention, not durable storage or automatic replay.
+
+Standalone `Agent` treats an input occurrence as recorded only after every `message_end` listener succeeds.
+A persistence-owning session must call `agent.markInputRecorded(event.message)` from its current `message_end` listener immediately after buffering that occurrence's transcript entry, even if a subsequent disk write throws.
+Do not acknowledge before buffering: a failed append before buffering must leave the occurrence pending.
+The acknowledgment applies only to that current emission and is idempotent; repeated calls and default successful completion cannot retire another occurrence using the same object.
+Calls outside that emission do nothing.
+A buffering acknowledgment remains committed if a later observer or disk write fails; without it, a failing listener leaves the occurrence retained.
 
 When steering messages are detected after a turn completes:
 1. All tool calls from the current assistant message have already finished
