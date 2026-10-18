@@ -1416,6 +1416,13 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getEditContextLines(): number {
+		const lines = this.settings.editContextLines;
+		return typeof lines === "number" && Number.isSafeInteger(lines) && lines >= 0
+			? lines
+			: SETTINGS_DEFAULTS.editContextLines;
+	}
+
 	getToolPreviewLines(): number | undefined {
 		const lines = this.settings.toolPreviewLines;
 		return typeof lines === "number" && Number.isSafeInteger(lines) && lines >= 0 ? lines : undefined;

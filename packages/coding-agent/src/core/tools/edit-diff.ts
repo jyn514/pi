@@ -6,6 +6,7 @@ import * as Diff from "diff";
 import { constants } from "fs";
 import { access, readFile } from "fs/promises";
 import { splitBom } from "../../utils/text.ts";
+import { SETTINGS_DEFAULTS } from "../settings-defaults.ts";
 import { resolveToCwd } from "./path-utils.ts";
 
 export function detectLineEnding(content: string): "\r\n" | "\n" {
@@ -583,7 +584,7 @@ export function generateUnifiedPatch(path: string, oldContent: string, newConten
 export function generateDiffString(
 	oldContent: string,
 	newContent: string,
-	contextLines = 4,
+	contextLines: number = SETTINGS_DEFAULTS.editContextLines,
 ): { diff: string; firstChangedLine: number | undefined } {
 	const parts = Diff.diffLines(oldContent, newContent);
 	const output: string[] = [];
@@ -722,6 +723,7 @@ export async function computeEditsDiff(
 	path: string,
 	edits: Edit[],
 	cwd: string,
+	contextLines: number = SETTINGS_DEFAULTS.editContextLines,
 ): Promise<EditDiffResult | EditDiffError> {
 	const absolutePath = resolveToCwd(path, cwd);
 
@@ -743,7 +745,7 @@ export async function computeEditsDiff(
 		const { baseContent, newContent } = applyEditsToNormalizedContent(normalizedContent, edits, path);
 
 		// Generate the diff
-		return generateDiffString(baseContent, newContent);
+		return generateDiffString(baseContent, newContent, contextLines);
 	} catch (err) {
 		return { error: err instanceof Error ? err.message : String(err) };
 	}

@@ -4,6 +4,7 @@ import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile } 
 import { type Static, Type } from "typebox";
 import { splitBom } from "../../utils/text.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import { SETTINGS_DEFAULTS } from "../settings-defaults.ts";
 import {
 	applyEditsToNormalizedContent,
 	detectLineEnding,
@@ -15,7 +16,7 @@ import {
 } from "./edit-diff.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
-import { type EditRenderState, editRenderers } from "./renderers/edit.ts";
+import { createEditRenderers, type EditRenderState } from "./renderers/edit.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
 const replaceEditSchema = Type.Object(
@@ -98,6 +99,8 @@ const defaultEditOperations: EditOperations = {
 export interface EditToolOptions {
 	/** Custom operations for file editing. Default: local filesystem */
 	operations?: EditOperations;
+	/** Unchanged lines before and after changes in display diffs. Default: 4. Must be a non-negative safe integer. Does not change the unified patch. */
+	contextLines?: number;
 }
 
 function prepareEditArguments(input: unknown): EditToolInput {
@@ -145,6 +148,10 @@ export function createEditToolDefinition(
 	options?: EditToolOptions,
 ): ToolDefinition<typeof editSchema, EditToolDetails | undefined, EditRenderState> {
 	const ops = options?.operations ?? defaultEditOperations;
+	const contextLines = options?.contextLines ?? SETTINGS_DEFAULTS.editContextLines;
+	if (!Number.isSafeInteger(contextLines) || contextLines < 0) {
+		throw new RangeError("edit contextLines must be a non-negative safe integer");
+	}
 	return {
 		name: "edit",
 		label: "edit",
@@ -198,7 +205,7 @@ export function createEditToolDefinition(
 				await ops.writeFile(absolutePath, finalContent);
 				throwIfAborted();
 
-				const diffResult = generateDiffString(baseContent, newContent);
+				const diffResult = generateDiffString(baseContent, newContent, contextLines);
 				const patch = generateUnifiedPatch(path, baseContent, newContent);
 				return {
 					content: [
@@ -211,7 +218,7 @@ export function createEditToolDefinition(
 				};
 			});
 		},
-		...editRenderers,
+		...createEditRenderers(contextLines),
 	};
 }
 

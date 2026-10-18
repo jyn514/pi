@@ -4300,6 +4300,7 @@ export class AgentSession {
 			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages },
 					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					edit: { contextLines: this.settingsManager.getEditContextLines() },
 				});
 
 		this._baseToolDefinitions = new Map(

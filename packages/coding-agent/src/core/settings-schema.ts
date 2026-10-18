@@ -380,6 +380,13 @@ export const SettingsSchema = Type.Object(
 				default: SETTINGS_DEFAULTS.outputPadY,
 			}),
 		),
+		editContextLines: Type.Optional(
+			nonNegativeSafeInteger({
+				description:
+					"Unchanged lines shown before and after changes in new edit previews and results. Zero shows only changes.",
+				default: SETTINGS_DEFAULTS.editContextLines,
+			}),
+		),
 		toolPreviewLines: Type.Optional(
 			nonNegativeSafeInteger({
 				description: "Collapsed tool output preview override. Zero hides previews; unset preserves tool defaults.",
