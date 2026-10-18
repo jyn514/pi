@@ -228,7 +228,7 @@ describe("AgentSession input ownership", () => {
 		expect(saved.pending.nextTurn.map(getMessageText)).toEqual(["later aside"]);
 	});
 
-	it("reserves the run before synchronous loadout hooks can submit competing prepared input", async () => {
+	it("keeps the initial run's ownership when preparation reentrantly submits prepared input", async () => {
 		let armed = false;
 		const h = await harness({
 			extensionFactories: [
@@ -290,7 +290,7 @@ describe("AgentSession input ownership", () => {
 		{ stage: "auth", streamingBehavior: "steer" },
 		{ stage: "auth", streamingBehavior: "followUp" },
 	] as const)(
-		"resolves overlapping $stage preflight with $streamingBehavior without settling the active run",
+		"keeps B active when unreserved A reaches admission ($stage fixture, $streamingBehavior)",
 		async ({ stage, streamingBehavior }) => {
 			const preflight = gate();
 			const finishPreflight = gate();
@@ -332,6 +332,9 @@ describe("AgentSession input ownership", () => {
 				options: { streamingBehavior },
 			});
 			await bounded(preflight.promise);
+			expect(h.session.isStreaming).toBe(false);
+			expect(h.session.isIdle).toBe(true);
+			expect(h.faux.state.callCount).toBe(0);
 			const running = h.session.prompt("active B").catch(() => {});
 			await bounded(held.entered);
 			finishPreflight.release();
@@ -405,38 +408,65 @@ describe("AgentSession input ownership", () => {
 		expect(h.faux.state.callCount).toBe(1);
 	});
 
-	it.each(["raw", "prepared"] as const)("cancels fenced %s startup before provider admission", async (kind) => {
-		const entered = gate();
-		const finish = gate();
-		releases.push(finish.release);
-		const h = await harness({
-			extensionFactories: [
-				(pi) => {
-					pi.on("before_agent_start", async () => {
-						entered.release();
-						await finish.promise;
-					});
-				},
-			],
-		});
-		const admission = h.session.submitInput(
-			kind === "raw"
-				? { kind, text: "caller-owned task" }
-				: { kind, message: custom("caller-owned task"), options: { triggerTurn: true } },
-		);
-		await bounded(entered.promise);
-		expect(h.session.isStreaming).toBe(true);
-		await h.session.sendCustomMessage(custom("retained aside"), { deliverAs: "nextTurn" });
-		const stopping = h.session.handoff(`startup-${kind}`);
-		finish.release();
-		expect(await bounded(admission)).toMatchObject({ disposition: "rejected" });
-		const saved = await bounded(stopping);
-		expect(saved.pending.nextTurn.map(getMessageText)).toEqual(["retained aside"]);
-		expect(saved.pending.initial).toEqual([]);
-		expect(saved.pending.deferred).toEqual([]);
-		expect(h.faux.state.callCount).toBe(0);
-		expect(h.session.isIdle).toBe(true);
-	});
+	it.each([
+		{ kind: "raw", streamingBehavior: undefined },
+		{ kind: "raw", streamingBehavior: "steer" },
+		{ kind: "raw", streamingBehavior: "followUp" },
+		{ kind: "prepared", streamingBehavior: undefined },
+		{ kind: "prepared", streamingBehavior: "steer" },
+		{ kind: "prepared", streamingBehavior: "followUp" },
+	] as const)(
+		"keeps reserved $kind startup busy during competing admission ($streamingBehavior) until fenced cancellation",
+		async ({ kind, streamingBehavior }) => {
+			const entered = gate();
+			const finish = gate();
+			releases.push(finish.release);
+			const h = await harness({
+				extensionFactories: [
+					(pi) => {
+						pi.on("before_agent_start", async () => {
+							entered.release();
+							await finish.promise;
+						});
+					},
+				],
+			});
+			const admission = h.session.submitInput(
+				kind === "raw"
+					? { kind, text: "caller-owned task" }
+					: { kind, message: custom("caller-owned task"), options: { triggerTurn: true } },
+			);
+			await bounded(entered.promise);
+			expect(h.session.isStreaming).toBe(true);
+			expect(h.session.isIdle).toBe(false);
+			expect(h.faux.state.callCount).toBe(0);
+			expect(
+				await bounded(h.session.submitInput({ kind: "raw", text: "competing B", options: { streamingBehavior } })),
+			).toMatchObject({ disposition: streamingBehavior ? "queued" : "rejected" });
+			expect(h.session.isStreaming).toBe(true);
+			expect(h.session.isIdle).toBe(false);
+			expect(h.eventsOfType("agent_settled")).toHaveLength(0);
+			expect(h.faux.state.callCount).toBe(0);
+			await h.session.sendCustomMessage(custom("retained aside"), { deliverAs: "nextTurn" });
+			const stopping = h.session.handoff(`startup-${kind}`);
+			finish.release();
+			expect(await bounded(admission)).toMatchObject({ disposition: "rejected" });
+			const saved = await bounded(stopping);
+			expect(saved.pending.nextTurn.map(getMessageText)).toEqual(["retained aside"]);
+			expect(saved.pending.initial).toEqual([]);
+			expect(saved.pending.deferred).toEqual([]);
+			expect(saved.pending.steering.map(getMessageText)).toEqual(
+				streamingBehavior === "steer" ? ["competing B"] : [],
+			);
+			expect(saved.pending.followUp.map(getMessageText)).toEqual(
+				streamingBehavior === "followUp" ? ["competing B"] : [],
+			);
+			expect(h.faux.state.callCount).toBe(0);
+			expect(h.eventsOfType("agent_settled")).toHaveLength(0);
+			expect(h.session.isStreaming).toBe(false);
+			expect(h.session.isIdle).toBe(true);
+		},
+	);
 
 	it("retains deferred startup transformations and asides in separate owners when fenced", async () => {
 		const entered = gate();
