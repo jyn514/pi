@@ -47,6 +47,7 @@ export const SETTINGS_DEFAULTS = {
 	editorPaddingX: 0,
 	outputPad: 1,
 	outputPadY: 1,
+	editContextLines: 4,
 	autocompleteMaxVisible: 5,
 	markdown: {
 		codeBlockIndent: "  ",
