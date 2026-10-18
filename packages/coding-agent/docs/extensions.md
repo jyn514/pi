@@ -315,8 +315,10 @@ The built-in MCP support connects registered servers. When nothing does, because
 `ExtensionContext` provides the working directory, mode, UI, session manager, model runtime, abort signal, context usage, and controls for compaction and shutdown.
 Use `ctx.modelRegistry.streamSimple()` for provider-neutral nested model calls.
 
-Command handlers receive `ExtensionCommandContext`, which adds operations for waiting until idle, reloading, tree navigation, and session replacement.
+Command handlers receive `ExtensionCommandContext`, which adds operations for waiting until idle, pending-input handoff, fresh-input admission, reloading, tree navigation, and session replacement.
 These operations are command-only because calling them from lifecycle handlers can deadlock the runtime.
+`handoff`, `submitInput`, and `waitForIdle` reject calls made from awaited lifecycle handlers, including through a captured command context.
+Boundary handlers must return `entries` drafts instead of waiting for their persistence; Pi does not retry handlers automatically.
 
 Session replacement invalidates the old context. Capture only plain data before switching, then use the fresh context supplied to `withSession` for session-bound work.
 
@@ -344,14 +346,66 @@ pi.on("input", (event, ctx) => {
 
 ```typescript
 pi.registerCommand("pause", {
+  allowedWhilePaused: true,
   handler: async () => { pi.requestPause(); },
 });
-pi.registerCommand("resume", {
+pi.registerCommand("unpause", {
+  allowedWhilePaused: true,
   handler: async () => { pi.resume(); },
 });
 ```
 
-Pause state is process-local and is not restored with the session. While paused, prompt-like work is blocked, but manual session controls retain their existing behavior. A parked active run is not idle: do not wait for idle before calling `pi.resume()`.
+Pause state is process-local and is not restored with the session.
+While paused, ordinary prompts and extension commands are blocked unless the command declares `allowedWhilePaused: true`.
+That metadata permits command dispatch, not ordinary prompt admission.
+The handoff fence also blocks manual compaction and provider-producing session controls; ordinary cooperative pause retains existing manual-control behavior.
+A parked active run is not idle: do not wait for idle before calling `pi.resume()`.
+The built-in `/resume` remains the session picker; use a different name for an extension's unpause command.
+
+#### Transfer pending inputs
+
+`await ctx.handoff(requestId)` cooperatively finishes the current provider/tool boundary, stops the old run, and returns a `SessionHandoff`.
+The fence blocks new routing operations and conversational requests.
+A request or router admitted before the fence may finish even if it has not sent network traffic yet.
+The result contains `requestId`, `sessionId`, `sessionFile`, `leafId`, `wasActive`, queue modes, and pending `initial`, `steering`, `followUp`, `nextTurn`, and `deferred` inputs.
+`initial` contains already-prepared initial-prompt members, including attached asides, that never reached transcript ownership.
+Both queues include selected-but-unrecorded members and their unattempted tails, regardless of polling mode.
+Payloads retain images, custom-message details, distinct occurrences, and order within each source lane.
+Initial and selected prepared inputs must not repeat input preprocessing on replay.
+A buffered transcript entry belongs to history even if its disk append fails; handoff repairs the file rather than exporting that entry again.
+Flushed custom/bash results belong to the transcript, not the returned pending lanes.
+Deferred records are typed raw or prepared `SessionInput` values, never callback closures.
+An ordinary pause retains those records until resume or handoff; it does not reject them as new submissions.
+
+Successful return transfers pending-input ownership to the caller and leaves provider admission fenced.
+Cache warming remains suspended until explicit resume; the next real request can then restart it.
+Persist the result before announcing that work is saved; retain it in memory if the extension's write fails.
+The same request ID returns the outstanding result again; a different ID rejects until explicit `pi.resume()` releases that result.
+Queue/status observer errors are diagnostics and cannot reject a completed capture or erase its retry payload.
+A failed handoff retains core-owned inputs and the fence, but permits retry after the failure is resolved.
+Resume is rejected while handoff is still in progress.
+Explicit handoff materializes the normal session file even before the first conversation message; in-memory sessions reject it.
+Ordinary launch/quit behavior and empty-session suppression are unchanged.
+
+`await ctx.submitInput(input)` returns `{ disposition: "started" | "queued" | "handled" }` or `{ disposition: "rejected", error }` at admission, not at provider-run completion.
+Admission is not a persistence receipt; later failures use extension error reporting and do not transfer ownership back to the caller.
+`started` means a reserved run owns the entire prepared initial batch; failure before recording leaves its inputs available to handoff.
+Busy status during startup preparation alone does not acknowledge input admission.
+If another run starts during raw preflight, the input queues according to `streamingBehavior` or rejects without settling that other run.
+Raw input uses `{ kind: "raw", text, options }` and normal input handlers, authentication, and expansion.
+For harness-generated input, set `options.expandPromptTemplates: false` to avoid slash-command dispatch and template expansion.
+Prepared input uses `{ kind: "prepared", message: { customType, content, display, details }, options }` without repeating input preprocessing.
+Prepared options follow `sendMessage`: `triggerTurn` and `deliverAs` select immediate context, a fresh turn, steering, follow-up, or a next-turn aside.
+Transcript-only prepared input returns `handled`; queued input returns `queued`.
+Submission during settlement dispatch rejects before recording, so the caller retains ownership.
+Call this helper from an outside-handler replay controller; keep using ordinary `pi.sendMessage()` to enqueue synchronously from `agent_start`.
+Existing `pi.sendUserMessage()` and `pi.sendMessage()` remain fire-and-forget.
+
+Handoff does not persist a checkpoint or restore an old scheduler phase.
+Extensions own durable records, startup pauses, child coordination, replay identities, and per-input admission progress.
+Continue from the saved transcript with attributed fresh input after explicit resume, rather than replaying completed tool results.
+For a synthetic continuation, only `started` proves the fresh run began; `handled` or rejection leaves the unfinished task unresolved.
+If continuation fails after asides were staged, stop/export again and reconcile stable input identities before retrying, so pending inputs are not duplicated.
 
 <a id="state-management"></a>
 <a id="persist-state"></a>

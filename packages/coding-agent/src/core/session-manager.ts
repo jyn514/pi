@@ -1250,6 +1250,22 @@ export class SessionManager {
 		return this.persist;
 	}
 
+	/**
+	 * Explicitly materialize the normal session header and every buffered entry,
+	 * even without conversation messages. Ordinary empty-launch suppression is unchanged.
+	 * Throws for nonpersistent sessions or write failures; all entries remain in memory
+	 * so the caller can retry before transferring pending-work ownership.
+	 */
+	ensurePersisted(): void {
+		if (!this.persist || !this.sessionFile) {
+			throw new Error("Cannot persist a nonpersistent session");
+		}
+		// Rewrite even after a prior flush: a failed append can leave buffered entries
+		// ahead of the file. Do not mark the session flushed until the write succeeds.
+		this._rewriteFile();
+		this.flushed = true;
+	}
+
 	getCwd(): string {
 		return this.cwd;
 	}
@@ -1271,7 +1287,8 @@ export class SessionManager {
 	}
 
 	/**
-	 * A new session file is created only once the session contains a user or assistant message.
+	 * By default, a new session file is created only once it contains a user or assistant message.
+	 * Explicit ensurePersisted() calls bypass this empty-launch suppression.
 	 * Setup entries alone (model, thinking level, system prompt) stay in memory so opening and
 	 * closing pi without chatting leaves no file behind. Starting at the user message (not the
 	 * first assistant reply) keeps the prompt on disk if the first turn never completes (#10000).

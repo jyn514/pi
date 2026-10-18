@@ -69,6 +69,20 @@ A steering message enters after the current assistant turn and its tool calls. A
 
 `abort()` stops the active operation and waits for the session to become idle. `waitForIdle()` waits without aborting it.
 
+`requestPause()` parks after the completed provider/tool boundary; `resume()` releases the pause.
+Startup also counts as busy; pausing it waits for preparation, then parks before its first request.
+A parked run is not idle.
+For transcript-based suspension, `await session.handoff(requestId)` stops that run, exports all pending input lanes, and keeps provider admission fenced.
+This includes prepared `pending.initial` leftovers and selected-but-unrecorded queue members, not just messages still waiting in queues.
+Inputs buffered in session history are flushed instead of exported again, even after an earlier disk-write failure.
+The caller owns the returned `SessionHandoff` and must persist it before exit; core does not save or replay it automatically.
+Handoff requires a persistent session and explicitly materializes its normal session file, even when it contains only metadata.
+Ordinary empty sessions still leave no file behind.
+After explicit resume, `await session.submitInput(input)` admits raw or prepared fresh input and returns its disposition without waiting for provider-run completion.
+`SessionInput`, `InputAdmissionResult`, and `SessionHandoff` are exported types.
+See [Transfer pending inputs](extensions.md#transfer-pending-inputs) for ownership, retry, and lifecycle-handler restrictions.
+These APIs do not restore execution phases or mechanically replay completed tool calls.
+
 ## Subscribing to events
 
 Subscribe before prompting when the host needs streamed output:

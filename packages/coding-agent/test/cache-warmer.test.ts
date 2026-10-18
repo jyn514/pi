@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
 	type Api,
 	type AssistantMessage,
@@ -29,6 +32,7 @@ import type { ExtensionFactory } from "../src/core/extensions/types.ts";
 import { type SessionEntry, SessionManager, type UsageEntry } from "../src/core/session-manager.ts";
 import type { CacheWarmingMode } from "../src/core/settings-manager.ts";
 import { createInMemoryModelRegistry } from "./model-runtime-test-utils.ts";
+import { createHarness } from "./suite/harness.ts";
 
 const adaptiveModel: Model<Api> = {
 	...getBuiltinModel("anthropic", "claude-opus-4-6"),
@@ -305,6 +309,61 @@ describe("cache warming", () => {
 		await vi.advanceTimersByTimeAsync(270_000);
 		expect(failed.appendUsage).not.toHaveBeenCalled();
 		failed.warmer.cancel();
+	});
+
+	it("suspends pending decisions and prevents rearming until explicitly released", async () => {
+		vi.useFakeTimers();
+		let release!: (action: CacheWarmingAction) => void;
+		const decision = new Promise<CacheWarmingAction>((resolve) => {
+			release = resolve;
+		});
+		const { warmer, calls, events } = fakeRuntime({ decide: () => decision });
+		warmer.start(request(), current);
+		warmer.onAgentSettled();
+		await vi.advanceTimersByTimeAsync(270_000);
+		expect(events).toHaveLength(1);
+
+		warmer.cancel(true);
+		// An already-admitted real request may reach SDK stream setup after suspension.
+		warmer.start(request(), current);
+		release("warm");
+		await vi.advanceTimersByTimeAsync(270_000);
+		expect(calls).toHaveLength(0);
+
+		warmer.cancel();
+		await vi.advanceTimersByTimeAsync(270_000);
+		expect(calls).toHaveLength(0);
+		warmer.start(request(), current);
+		await vi.advanceTimersByTimeAsync(270_000);
+		expect(calls).toHaveLength(1);
+		warmer.cancel();
+	});
+
+	it("holds the actual session warmer across handoff and releases it only on explicit resume", async () => {
+		vi.useFakeTimers();
+		const dir = mkdtempSync(join(tmpdir(), "pi-warm-handoff-"));
+		const { warmer, calls } = fakeRuntime({ decide: () => "warm" });
+		const harness = await createHarness({ sessionManager: SessionManager.create(dir, dir), cacheWarmer: warmer });
+		try {
+			warmer.start(request(), current);
+			warmer.onAgentSettled();
+			await harness.session.handoff("warming");
+			await vi.advanceTimersByTimeAsync(270_000);
+			expect(calls).toHaveLength(0);
+			warmer.start(request(), current);
+			await vi.advanceTimersByTimeAsync(270_000);
+			expect(calls).toHaveLength(0);
+
+			harness.session.resume();
+			await vi.advanceTimersByTimeAsync(270_000);
+			expect(calls).toHaveLength(0);
+			warmer.start(request(), current);
+			await vi.advanceTimersByTimeAsync(270_000);
+			expect(calls).toHaveLength(1);
+		} finally {
+			harness.cleanup();
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	it("formats status and usage entries", () => {

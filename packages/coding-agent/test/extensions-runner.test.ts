@@ -467,6 +467,37 @@ describe("ExtensionRunner", () => {
 	});
 
 	describe("command collection", () => {
+		it.each([true, false, undefined])(
+			"retains allowedWhilePaused=%s in resolved commands",
+			async (allowedWhilePaused) => {
+				const runtime = createExtensionRuntime();
+				const extension = await loadExtensionFromFactory(
+					(pi) => pi.registerCommand("control", { allowedWhilePaused, handler: async () => {} }),
+					tempDir,
+					createEventBus(),
+					runtime,
+				);
+				const runner = new ExtensionRunner([extension], runtime, tempDir, sessionManager, modelRegistry);
+				expect(runner.getCommand("control")?.allowedWhilePaused).toBe(allowedWhilePaused);
+			},
+		);
+
+		it("rejects nonboolean paused-command permission from an untyped extension", async () => {
+			const runtime = createExtensionRuntime();
+			await expect(
+				loadExtensionFromFactory(
+					(pi) => {
+						const options = { handler: async () => {} };
+						Object.assign(options, { allowedWhilePaused: "false" });
+						pi.registerCommand("control", options);
+					},
+					tempDir,
+					createEventBus(),
+					runtime,
+				),
+			).rejects.toThrow("allowedWhilePaused must be a boolean");
+		});
+
 		it("collects commands from multiple extensions", async () => {
 			const cmdCode = (name: string) => `
 				export default function(pi) {

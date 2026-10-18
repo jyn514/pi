@@ -2,6 +2,7 @@
  * Extension runner - executes extensions and manages their lifecycle.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import {
 	getCurrentSystemMessage,
@@ -361,7 +362,14 @@ const noOpUIContext: ExtensionUIContext = {
 	setToolsExpanded: () => {},
 };
 
+interface AwaitedHandler {
+	event: ExtensionEvent["type"];
+	active: boolean;
+	parent: AwaitedHandler | undefined;
+}
+
 export class ExtensionRunner {
+	private readonly awaitedHandler = new AsyncLocalStorage<AwaitedHandler>();
 	private extensions: Extension[];
 	private runtime: ExtensionRuntime;
 	private uiContext: ExtensionUIContext;
@@ -376,6 +384,12 @@ export class ExtensionRunner {
 	private isProjectTrustedFn: () => boolean = () => true;
 	private getSignalFn: () => AbortSignal | undefined = () => undefined;
 	private waitForIdleFn: () => Promise<void> = async () => {};
+	private handoffFn: ExtensionCommandContext["handoff"] = async () => {
+		throw new Error("Session handoff is not available in this context");
+	};
+	private submitInputFn: ExtensionCommandContext["submitInput"] = async () => {
+		throw new Error("Input admission is not available in this context");
+	};
 	private abortFn: () => void = () => {};
 	private hasPendingMessagesFn: () => boolean = () => false;
 	private getContextUsageFn: () => ContextUsage | undefined = () => undefined;
@@ -554,7 +568,20 @@ export class ExtensionRunner {
 		};
 	}
 
-	bindCommandContext(actions?: ExtensionCommandContextActions): void {
+	bindCommandContext(
+		actions?: ExtensionCommandContextActions,
+		inputs?: Pick<ExtensionCommandContext, "handoff" | "submitInput">,
+	): void {
+		this.handoffFn =
+			inputs?.handoff ??
+			(async () => {
+				throw new Error("Session handoff is not available in this context");
+			});
+		this.submitInputFn =
+			inputs?.submitInput ??
+			(async () => {
+				throw new Error("Input admission is not available in this context");
+			});
 		if (actions) {
 			this.waitForIdleFn = actions.waitForIdle;
 			this.newSessionHandler = actions.newSession;
@@ -743,6 +770,28 @@ export class ExtensionRunner {
 		if (this.staleMessage) {
 			throw new Error(this.staleMessage);
 		}
+	}
+
+	/** Reject self-waits without blocking an external control command running concurrently. */
+	assertOutsideHandler(operation: string): void {
+		for (let handler = this.awaitedHandler.getStore(); handler; handler = handler.parent) {
+			if (handler.active) {
+				throw new Error(
+					`${operation} cannot run from an awaited ${handler.event} handler; use a command or an outside-handler controller. Boundary handlers must return entries drafts instead of waiting for persistence.`,
+				);
+			}
+		}
+	}
+
+	private async invokeHandler<T>(event: ExtensionEvent["type"], run: () => T | Promise<T>): Promise<T> {
+		const handler: AwaitedHandler = { event, active: true, parent: this.awaitedHandler.getStore() };
+		return this.awaitedHandler.run(handler, async () => {
+			try {
+				return await run();
+			} finally {
+				handler.active = false;
+			}
+		});
 	}
 
 	onError(listener: ExtensionErrorListener): () => void {
@@ -1016,7 +1065,16 @@ export class ExtensionRunner {
 		};
 		context.waitForIdle = () => {
 			this.assertActive();
+			this.assertOutsideHandler("waitForIdle");
 			return this.waitForIdleFn();
+		};
+		context.handoff = (requestId) => {
+			this.assertActive();
+			return this.handoffFn(requestId);
+		};
+		context.submitInput = (input) => {
+			this.assertActive();
+			return this.submitInputFn(input);
 		};
 		context.newSession = (options) => {
 			this.assertActive();
@@ -1060,7 +1118,9 @@ export class ExtensionRunner {
 					context,
 				} as TurnEndEvent | AgentBeforeSettleEvent;
 				try {
-					const handlerResult = (await handler(event, ctx)) as BoundaryResult | undefined;
+					const handlerResult = (await this.invokeHandler(event.type, () => handler(event, ctx))) as
+						| BoundaryResult
+						| undefined;
 					if (handlerResult?.entries !== undefined) entries = handlerResult.entries;
 					if (handlerResult?.continue !== undefined) shouldContinue = handlerResult.continue;
 				} catch (err) {
@@ -1108,7 +1168,7 @@ export class ExtensionRunner {
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, event.type)) {
 			for (const handler of handlers) {
 				try {
-					const handlerResult = await handler(event, ctx);
+					const handlerResult = await this.invokeHandler(event.type, () => handler(event, ctx));
 
 					if (this.isSessionBeforeEvent(event) && handlerResult) {
 						result = handlerResult as SessionBeforeEventResult;
@@ -1140,7 +1200,9 @@ export class ExtensionRunner {
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, event.type)) {
 			for (const handler of handlers) {
 				try {
-					const result = (await handler(event, ctx)) as CacheWarmingDecisionEventResult | undefined;
+					const result = (await this.invokeHandler(event.type, () => handler(event, ctx))) as
+						| CacheWarmingDecisionEventResult
+						| undefined;
 					if (result?.action !== undefined) action = result.action;
 				} catch (err) {
 					this.emitError({
@@ -1165,7 +1227,9 @@ export class ExtensionRunner {
 			for (const handler of handlers) {
 				try {
 					const currentEvent: MessageEndEvent = { ...event, message: currentMessage };
-					const handlerResult = (await handler(currentEvent, ctx)) as MessageEndEventResult | undefined;
+					const handlerResult = (await this.invokeHandler(currentEvent.type, () => handler(currentEvent, ctx))) as
+						| MessageEndEventResult
+						| undefined;
 					if (!handlerResult?.message) continue;
 
 					if (handlerResult.message.role !== currentMessage.role) {
@@ -1203,7 +1267,9 @@ export class ExtensionRunner {
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "tool_result")) {
 			for (const handler of handlers) {
 				try {
-					const handlerResult = (await handler(currentEvent, ctx)) as ToolResultEventResult | undefined;
+					const handlerResult = (await this.invokeHandler(currentEvent.type, () => handler(currentEvent, ctx))) as
+						| ToolResultEventResult
+						| undefined;
 					if (!handlerResult) continue;
 
 					if (handlerResult.content !== undefined) {
@@ -1260,7 +1326,7 @@ export class ExtensionRunner {
 
 		for (const { handlers } of snapshotEventHandlers(this.extensions, "tool_call")) {
 			for (const handler of handlers) {
-				const handlerResult = await handler(event, ctx);
+				const handlerResult = await this.invokeHandler(event.type, () => handler(event, ctx));
 
 				if (handlerResult) {
 					result = handlerResult as ToolCallEventResult;
@@ -1280,7 +1346,7 @@ export class ExtensionRunner {
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "user_bash")) {
 			for (const handler of handlers) {
 				try {
-					const handlerResult = await handler(event, ctx);
+					const handlerResult = await this.invokeHandler(event.type, () => handler(event, ctx));
 					if (handlerResult === undefined) continue;
 					if (!isUserBashEventResult(handlerResult)) {
 						throw new Error(
@@ -1320,7 +1386,9 @@ export class ExtensionRunner {
 					const visibleMessages = currentMessages.filter((message) => message.role !== "system");
 					const visibleSnapshot = visibleMessages.slice();
 					const event: ContextEvent = { type: "context", messages: visibleMessages };
-					const handlerResult = (await handler(event, ctx)) as ContextEventResult | undefined;
+					const handlerResult = (await this.invokeHandler(event.type, () => handler(event, ctx))) as
+						| ContextEventResult
+						| undefined;
 
 					// Handlers may return a new list or edit event.messages in place.
 					const returned =
@@ -1346,7 +1414,9 @@ export class ExtensionRunner {
 				try {
 					const hadLeadingSystemMessage = currentMessages[0]?.role === "system";
 					const event: ContextWithSystemEvent = { type: "context_with_system", messages: currentMessages };
-					const handlerResult = (await handler(event, ctx)) as ContextEventResult | undefined;
+					const handlerResult = (await this.invokeHandler(event.type, () => handler(event, ctx))) as
+						| ContextEventResult
+						| undefined;
 					currentMessages = handlerResult?.messages ?? currentMessages;
 					// Providers read the prompt and initial tools from the leading system message.
 					// Losing it is never intended; report it but honor the handler's output.
@@ -1384,7 +1454,7 @@ export class ExtensionRunner {
 						type: "before_provider_request",
 						payload: currentPayload,
 					};
-					const handlerResult = await handler(event, ctx);
+					const handlerResult = await this.invokeHandler(event.type, () => handler(event, ctx));
 					if (handlerResult !== undefined) {
 						currentPayload = handlerResult;
 					}
@@ -1415,7 +1485,7 @@ export class ExtensionRunner {
 						type: "before_provider_headers",
 						headers,
 					};
-					await handler(event, ctx);
+					await this.invokeHandler(event.type, () => handler(event, ctx));
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
@@ -1459,7 +1529,7 @@ export class ExtensionRunner {
 						},
 						systemPromptOptions: currentOptions,
 					};
-					const handlerResult = await handler(event, ctx);
+					const handlerResult = await this.invokeHandler(event.type, () => handler(event, ctx));
 
 					if (handlerResult) {
 						const result = handlerResult as BeforeAgentStartEventResult;
@@ -1501,7 +1571,7 @@ export class ExtensionRunner {
 			for (const handler of handlers) {
 				try {
 					const event: ResourcesDiscoverEvent = { type: "resources_discover", cwd, reason };
-					const handlerResult = await handler(event, ctx);
+					const handlerResult = await this.invokeHandler(event.type, () => handler(event, ctx));
 					const result = handlerResult as ResourcesDiscoverResult | undefined;
 
 					if (result?.skillPaths?.length) {
@@ -1550,7 +1620,9 @@ export class ExtensionRunner {
 						source,
 						streamingBehavior,
 					};
-					const result = (await handler(event, ctx)) as InputEventResult | undefined;
+					const result = (await this.invokeHandler(event.type, () => handler(event, ctx))) as
+						| InputEventResult
+						| undefined;
 					if (result?.action === "handled") return result;
 					if (result?.action === "transform") {
 						currentText = result.text;

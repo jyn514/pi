@@ -13,6 +13,7 @@
  * Modes use this class and add their own I/O layer on top.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import {
@@ -331,6 +332,45 @@ export interface PromptOptions {
 	preflightCancelled?: () => void;
 }
 
+/** Fresh input, either unprocessed text or already prepared extension content. */
+export type SessionInput =
+	| { kind: "raw"; text: string; options?: Omit<PromptOptions, "preflightResult" | "preflightCancelled"> }
+	| {
+			kind: "prepared";
+			message: Pick<CustomMessage, "customType" | "content" | "display" | "details"> & { timestamp?: number };
+			options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" };
+	  };
+
+export type InputAdmissionResult = { disposition: PromptDisposition } | { disposition: "rejected"; error: string };
+
+export interface SessionHandoff {
+	requestId: string;
+	sessionId: string;
+	sessionFile: string;
+	leafId: string | null;
+	wasActive: boolean;
+	queueModes: { steering: Agent["steeringMode"]; followUp: Agent["followUpMode"] };
+	pending: {
+		/** Prepared initial-prompt inputs that never reached transcript ownership. */
+		initial: AgentMessage[];
+		steering: AgentMessage[];
+		followUp: AgentMessage[];
+		nextTurn: CustomMessage[];
+		deferred: SessionInput[];
+	};
+}
+
+/** A record remains owned here, including while asynchronous preflight is running. */
+interface DeferredSessionInput {
+	input: SessionInput;
+	options?: PromptOptions;
+	prepared?: SessionInput[];
+	processing?: Promise<void>;
+	processingActive?: boolean;
+	/** A preprocessing failure retains ownership but must not automatically rerun the handler. */
+	failed?: boolean;
+}
+
 /** Options for model/thinking mutations. */
 export interface ModelMutationOptions {
 	/** Persist the new value to global defaults. Defaults to session-only. */
@@ -443,7 +483,14 @@ export class AgentSession {
 	private _isBeforeSettle = false;
 	private _abortDuringBeforeSettle = false;
 	private _isEmittingAgentSettled = false;
-	private readonly _deferredSettledActions: Array<() => Promise<void>> = [];
+	private readonly _deferredSettledInputs: DeferredSessionInput[] = [];
+	private _drainingSettledInputs = false;
+	private readonly _deferredInputContext = new AsyncLocalStorage<DeferredSessionInput>();
+	private _admissionsFenced = false;
+	private _handoffInProgress = false;
+	private _handoffFlushError?: { error: unknown };
+	private _outstandingHandoff?: { requestId: string; result: Promise<SessionHandoff> };
+	private readonly _handoffProgressWaiters = new Set<() => void>();
 
 	private _resourceLoader: ResourceLoader;
 	private _customTools: ToolDefinition[];
@@ -821,6 +868,10 @@ export class AgentSession {
 				return { previous, context: previous?.context ?? canonicalContext, projection };
 			};
 			let { previous, context, projection } = await prepare();
+			if (this._admissionsFenced) {
+				await this._waitForPauseBoundary(signal);
+				signal?.throwIfAborted();
+			}
 			const model = previous?.model ?? this.agent.state.model;
 			const thinkingLevel = previous?.thinkingLevel ?? this.agent.state.thinkingLevel;
 			if (!isVirtualModel(model)) return { ...previous, context, model, thinkingLevel };
@@ -850,6 +901,10 @@ export class AgentSession {
 			if (this._exceedsCompactionThreshold(route.model, projection)) {
 				await this._runAutoCompaction("threshold", false);
 				({ previous, context } = await prepare());
+			}
+			if (this._admissionsFenced) {
+				await this._waitForPauseBoundary(signal);
+				signal?.throwIfAborted();
 			}
 			return { ...previous, context, model: route.model, thinkingLevel: route.thinkingLevel };
 		};
@@ -1049,28 +1104,42 @@ export class AgentSession {
 		});
 	}
 
-	/** Emit an event to all listeners */
+	/** Input/lifecycle events can fail delivery; state notifications cannot undo ownership. */
 	private _emit(event: AgentSessionEvent): void {
-		for (const l of this._eventListeners) {
-			l(event);
+		for (const listener of this._eventListeners) {
+			try {
+				listener(event);
+			} catch (error) {
+				if (event.type !== "queue_update" && event.type !== "pause_state_changed") throw error;
+				try {
+					this._extensionRunner.emitError({
+						extensionPath: "<observer>",
+						event: event.type,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				} catch {
+					// A failing diagnostic listener cannot reject an already-owned state change either.
+				}
+			}
 		}
 	}
 
 	private _setPauseState(state: PauseState): void {
 		if (this._pauseState === state) return;
 		this._pauseState = state;
+		this._notifyHandoffProgress();
 		this._emit({ type: "pause_state_changed", state });
 	}
 
 	private _throwIfPausedForWork(): void {
-		if (this._pauseState === "paused") {
+		if (this._admissionsFenced || this._pauseState === "paused") {
 			throw new Error("Session is paused; resume it before submitting work.");
 		}
 	}
 
 	/** Check and commit together; the unpaused path must not yield. */
 	private _admitWork(operationGeneration: number, commit: () => void): boolean | Promise<boolean> {
-		if (operationGeneration !== this._pauseCancellationGeneration) return false;
+		if (operationGeneration !== this._pauseCancellationGeneration || this._admissionsFenced) return false;
 		if (this._pauseState !== "unpaused") {
 			return this._waitForResume().then(() => this._admitWork(operationGeneration, commit));
 		}
@@ -1102,6 +1171,7 @@ export class AgentSession {
 	}
 
 	private _resolveIdleWaitIfIdle(): void {
+		this._notifyHandoffProgress();
 		if (!this.isIdle || !this._resolveIdleWait) {
 			return;
 		}
@@ -1112,27 +1182,75 @@ export class AgentSession {
 	}
 
 	private async _emitAgentSettled(): Promise<void> {
-		this._cacheWarmer?.onAgentSettled();
-		this._isAgentRunActive = false;
-		this._isEmittingAgentSettled = true;
 		try {
-			const aborted = this._agentRunAbortRequested;
-			await this._extensionRunner.emit({ type: "agent_settled", aborted });
-			this._emit({ type: "agent_settled", aborted });
-		} finally {
-			this._isEmittingAgentSettled = false;
-		}
-
-		const deferred = this._deferredSettledActions.splice(0);
-		if (deferred.length > 0) {
+			this._isAgentRunActive = false;
+			this._isEmittingAgentSettled = true;
 			try {
-				for (const action of deferred) await action();
+				this._cacheWarmer?.onAgentSettled();
+				const aborted = this._agentRunAbortRequested;
+				await this._extensionRunner.emit({ type: "agent_settled", aborted });
+				this._emit({ type: "agent_settled", aborted });
 			} finally {
-				this._resolveIdleWaitIfIdle();
+				this._isEmittingAgentSettled = false;
+				this._notifyHandoffProgress();
 			}
-			return;
+
+			// A deferred run settles inside its caller's drain. That caller retains
+			// ownership of the current record and must remain the only drain owner.
+			if (this._drainingSettledInputs) return;
+			this._drainingSettledInputs = true;
+			try {
+				while (
+					!this._admissionsFenced &&
+					!this.agent.hasUnrecordedInputs() &&
+					this._deferredSettledInputs.length > 0
+				) {
+					if (this._pauseState !== "unpaused") {
+						// Recorded inputs remain core-owned while paused. Handoff cancels
+						// this wait without admitting or removing those inputs.
+						const operationGeneration = this._pauseCancellationGeneration;
+						await this._waitForResume();
+						if (operationGeneration !== this._pauseCancellationGeneration) break;
+						continue;
+					}
+					const record = this._deferredSettledInputs[0];
+					if (record.failed) break;
+					const input = record.input;
+					record.processingActive = true;
+					record.processing = this._deferredInputContext
+						.run(record, () =>
+							input.kind === "raw"
+								? this._prompt(input.text, record.options ?? input.options, record)
+								: this._sendPreparedInput(input, undefined, record),
+						)
+						.finally(() => {
+							record.processingActive = false;
+						});
+					try {
+						await record.processing;
+					} catch (error) {
+						record.failed = true;
+						this._extensionRunner.emitError({
+							extensionPath: "<runtime>",
+							event: "deferred_input",
+							error: error instanceof Error ? error.message : String(error),
+						});
+					} finally {
+						record.processing = undefined;
+					}
+					if (this._deferredSettledInputs[0] === record) break;
+				}
+			} finally {
+				this._drainingSettledInputs = false;
+			}
+		} finally {
+			this._resolveIdleWaitIfIdle();
 		}
-		this._resolveIdleWaitIfIdle();
+	}
+
+	private _removeDeferredInput(record: DeferredSessionInput): void {
+		const index = this._deferredSettledInputs.indexOf(record);
+		if (index !== -1) this._deferredSettledInputs.splice(index, 1);
 	}
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
@@ -1181,26 +1299,32 @@ export class AgentSession {
 
 		// Handle session persistence
 		if (event.type === "message_end") {
-			let entryId: string | undefined;
-			// Check if this is a custom message from extensions
-			if (event.message.role === "custom") {
-				// Persist as CustomMessageEntry
-				entryId = this.sessionManager.appendCustomMessageEntry(
-					event.message.customType,
-					event.message.content,
-					event.message.display,
-					event.message.details,
-				);
-			} else if (
-				event.message.role === "system" ||
-				event.message.role === "user" ||
-				event.message.role === "assistant" ||
-				event.message.role === "toolResult"
-			) {
-				// Regular LLM message - persist as SessionMessageEntry
-				entryId = this.sessionManager.appendMessage(event.message);
+			const oldLeaf = this.sessionManager.getLeafId();
+			try {
+				if (event.message.role === "custom") {
+					this.sessionManager.appendCustomMessageEntry(
+						event.message.customType,
+						event.message.content,
+						event.message.display,
+						event.message.details,
+					);
+				} else if (
+					event.message.role === "system" ||
+					event.message.role === "user" ||
+					event.message.role === "assistant" ||
+					event.message.role === "toolResult"
+				) {
+					this.sessionManager.appendMessage(event.message);
+				}
+			} finally {
+				// Appending is synchronous. Advancing the leaf transfers ownership to
+				// SessionManager's buffer even when its subsequent disk write throws.
+				const entryId = this.sessionManager.getLeafId();
+				if (entryId && entryId !== oldLeaf) {
+					this._entryIdsByMessage.set(event.message, entryId);
+					this.agent.markInputRecorded(event.message);
+				}
 			}
-			if (entryId) this._entryIdsByMessage.set(event.message, entryId);
 			// Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
 
 			if (event.message.role === "assistant") {
@@ -1430,6 +1554,7 @@ export class AgentSession {
 	 * Call this when completely done with the session.
 	 */
 	dispose(): void {
+		this._outstandingHandoff = undefined;
 		try {
 			this._clearPause(true);
 			this.abortRetry();
@@ -1869,48 +1994,65 @@ export class AgentSession {
 	// =========================================================================
 
 	/**
-	 * Start a run from a user or custom message. The session counts as busy from here on, so
-	 * messages sent while before_agent_start handlers run are queued into this run instead of
-	 * starting another, and an abort requested meanwhile aborts the run as soon as it exists.
-	 * @param onStarted Called once the run's messages are prepared, before the first request.
+	 * Reserve a user/custom run before asynchronous preparation. Reservation is not provider
+	 * admission: pause parks prepared startup before Agent.prompt, without surrendering its inputs.
+	 * @param onStarted Called only after Agent retains the complete starting batch.
 	 */
 	private async _startRun(
 		trigger: BeforeAgentStartTrigger,
 		onStarted?: () => void,
 		operationGeneration = this._pauseCancellationGeneration,
+		record?: DeferredSessionInput,
+		onCancelled?: () => void,
 	): Promise<void> {
 		// Do not yield when unpaused: admission and marking the run active must be atomic.
 		if (this._pauseState !== "unpaused") {
 			await this._waitForPauseBoundary(undefined, operationGeneration);
 		}
-		if (operationGeneration !== this._pauseCancellationGeneration) return;
-		this._isAgentRunActive = true;
+		if (operationGeneration !== this._pauseCancellationGeneration || this._admissionsFenced) {
+			onCancelled?.();
+			return;
+		}
+		if (this._isAgentRunActive || this.agent.signal) {
+			throw new Error(
+				"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
+			);
+		}
 		this._agentRunAbortRequested = false;
-		let messages: AgentMessage[];
+		this._isAgentRunActive = true;
+		let runStarted = false;
 		try {
-			messages = await this._prepareRun(trigger);
-		} catch (error) {
-			this._isAgentRunActive = false;
+			const { messages, nextTurnCount } = await this._prepareRun(trigger, record);
+			// While startup was reserved these messages could not split a tool call/result.
+			// Preserve upstream's idle ordering: flush them before the starting batch.
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
-			this._resolveIdleWaitIfIdle();
-			throw error;
-		}
-		// Messages held while the run was starting go before its starting messages, as they would
-		// have while idle. No run exists yet, so they cannot split a tool call from its result.
-		this._flushPendingBashMessages();
-		this._flushPendingCustomMessages();
-		onStarted?.();
+			// Compaction before the prompt may have scheduled a retry; this run replaces it.
+			this._failedResponse = undefined;
+			this._recordSelection();
+			this._pendingToolNames.clear();
 
-		// Compaction before the prompt may have scheduled a retry; the new prompt replaces it.
-		this._failedResponse = undefined;
-		this._recordSelection();
-		// The run records the loadout in the transcript; restored tools that did not register by now
-		// are dropped, so a tool that never registers does not stay pending.
-		this._pendingToolNames.clear();
-		try {
-			await this.agent.prompt(messages);
-			while (!this._agentRunAbortRequested) {
+			if (this._pauseState !== "unpaused" || this._admissionsFenced) {
+				// No low-level turn exists. Keep the reservation and prepared payload while
+				// paused; handoff can cancel this wait without transferring their owners.
+				await this._waitForPauseBoundary(undefined, operationGeneration);
+				if (operationGeneration !== this._pauseCancellationGeneration || this._admissionsFenced) {
+					onCancelled?.();
+					return;
+				}
+			}
+			// Agent.prompt retains the entire batch before its first await. Ordinary abort
+			// during preparation still reaches Agent through the agent_start abort bridge.
+			const running = this.agent.prompt(messages);
+			runStarted = true;
+			try {
+				// agent_start may synchronously stage more asides. Consume only this prefix.
+				this._pendingNextTurnMessages.splice(0, nextTurnCount);
+				onStarted?.();
+			} finally {
+				await running;
+			}
+			while (!this._agentRunAbortRequested && !this.agent.hasUnrecordedInputs()) {
 				if (operationGeneration !== this._pauseCancellationGeneration) break;
 
 				const postRunContinuation = await this._handlePostAgentRun();
@@ -1935,37 +2077,46 @@ export class AgentSession {
 				await this.agent.continue();
 			}
 		} finally {
-			if (this._agentRunAbortRequested) this._finishCancelledRetry();
 			this._failedResponse = undefined;
 			this._runSystemPromptOptions = undefined;
-			this._flushPendingBashMessages();
-			this._flushPendingCustomMessages();
-			if (this._pauseState === "pausing") {
-				this._setPauseState("paused");
+			try {
+				if (this._agentRunAbortRequested) this._finishCancelledRetry();
+				this._flushPendingBashMessages();
+				this._flushPendingCustomMessages();
+			} finally {
+				// Preparation, persistence and observers must not strand the reservation
+				// or a handoff waiting for settlement that can never happen.
+				try {
+					if (this._pauseState === "pausing") this._setPauseState("paused");
+				} finally {
+					if (runStarted) {
+						await this._emitAgentSettled();
+					} else {
+						// Preserve upstream: preparation failure/cancellation is not an
+						// agent lifecycle, but its busy reservation must still be released.
+						this._isAgentRunActive = false;
+						this._resolveIdleWaitIfIdle();
+					}
+				}
 			}
-			await this._emitAgentSettled();
 		}
 	}
 
 	/**
-	 * Prepare a run and return its starting messages: compact first when needed, emit
-	 * before_agent_start, apply the run's prompt options and tool loadout, and build the starting
-	 * message followed by pending nextTurn messages (consumed here) and handler messages, with a
-	 * system patch first when the prompt changed.
+	 * Prepare a reserved run: compact, emit before_agent_start, normalize the starting input,
+	 * apply prompt/loadout options, and snapshot (but do not consume) nextTurn messages.
 	 */
-	private async _prepareRun(trigger: BeforeAgentStartTrigger): Promise<AgentMessage[]> {
-		// Check if we need to compact before sending (catches aborted responses).
-		// The starting message is sent below, so do not call agent.continue() here.
+	private async _prepareRun(
+		trigger: BeforeAgentStartTrigger,
+		record?: DeferredSessionInput,
+	): Promise<{ messages: AgentMessage[]; nextTurnCount: number }> {
+		// The starting message is sent below, so do not continue an aborted response here.
 		const lastAssistant = this._findLastAssistantMessage();
-		if (lastAssistant) {
-			await this._checkCompaction(lastAssistant, false);
-		}
+		if (lastAssistant) await this._checkCompaction(lastAssistant, false);
 
 		const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;
 		const result = await this._extensionRunner.emitBeforeAgentStart(trigger, this._baseSystemPromptOptions);
-		// Handlers may edit event.systemPromptOptions.selectedTools or call setActiveTools(),
-		// which updates the live loadout instead. An explicit edit wins; otherwise the live
-		// loadout is authoritative, so a setActiveTools() call is not undone here.
+		// Explicit edits win over setActiveTools(); otherwise the live loadout is authoritative.
 		const handlerEditedTools =
 			result.systemPromptOptions.selectedTools.length !== selectedToolsBefore.length ||
 			result.systemPromptOptions.selectedTools.some((name, index) => name !== selectedToolsBefore[index]);
@@ -1975,8 +2126,7 @@ export class AgentSession {
 		if (trigger.messageType === "custom") {
 			messages.push(trigger.message);
 		} else {
-			// Normalize images after before_agent_start so extension-driven model selection
-			// determines the resize profile used for the request and history.
+			// Model selection by before_agent_start determines the image resize profile.
 			const normalized = await this._normalizePromptImages(trigger.images);
 			const text =
 				normalized.hints.length > 0 ? `${trigger.prompt}\n\n${normalized.hints.join("\n")}` : trigger.prompt;
@@ -1986,24 +2136,46 @@ export class AgentSession {
 				timestamp: Date.now(),
 			});
 		}
-		// Inject any pending "nextTurn" messages as context alongside the starting message
+		// Preserve upstream ordering: starting input, nextTurn prefix, handler messages.
+		const nextTurnCount = this._pendingNextTurnMessages.length;
 		messages.push(...this._pendingNextTurnMessages);
-		this._pendingNextTurnMessages = [];
 		for (const msg of result.messages) {
 			messages.push({
 				role: "custom",
 				customType: msg.customType,
-				// Untyped extensions can pass null/missing content; normalize at ingestion.
 				content: msg.content ?? [],
 				display: msg.display,
 				details: msg.details,
 				timestamp: Date.now(),
 			});
 		}
+		if (record) {
+			// Keep transformed input/handler results without replaying their handlers.
+			// Asides still belong to nextTurn until Agent retains the complete batch.
+			record.prepared = messages.flatMap((message, index): SessionInput[] => {
+				if (index > 0 && index <= nextTurnCount) return [];
+				if (message.role !== "user" && message.role !== "custom") return [];
+				return [
+					{
+						kind: "prepared",
+						message:
+							message.role === "custom"
+								? message
+								: {
+										customType: "session-handoff-input",
+										content: message.content,
+										display: true,
+										timestamp: message.timestamp,
+									},
+						options: { triggerTurn: true },
+					},
+				];
+			});
+		}
 		const updateMessage = this._preparePromptAndToolLoadout(result.systemPromptOptions);
 		this._runSystemPromptOptions = result.systemPromptOptions;
 		if (updateMessage) messages.unshift(updateMessage);
-		return messages;
+		return { messages, nextTurnCount };
 	}
 
 	private async _handlePostAgentRun(): Promise<boolean> {
@@ -2123,23 +2295,41 @@ export class AgentSession {
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
 		if (this._isEmittingAgentSettled) {
-			this._deferredSettledActions.push(async () => await this.prompt(text, options));
+			// Control commands must not become deferred work: their handoff may
+			// wait for that same record's preprocessing to finish.
+			if ((options?.expandPromptTemplates ?? true) && text.startsWith("/")) {
+				const execution = this._tryExecuteExtensionCommand(text);
+				if (execution !== false) {
+					await execution;
+					options?.preflightResult?.("handled");
+					return;
+				}
+			}
+			const { preflightResult: _result, preflightCancelled: _cancelled, ...rawOptions } = options ?? {};
+			this._deferredSettledInputs.push({ input: { kind: "raw", text, options: rawOptions }, options });
 			return;
 		}
+		return this._prompt(text, options);
+	}
+
+	private async _prompt(text: string, options?: PromptOptions, record?: DeferredSessionInput): Promise<void> {
 		const operationGeneration = this._pauseCancellationGeneration;
-		this._throwIfPausedForWork();
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 		const preflightResult = options?.preflightResult;
 		// Handle extension commands first (execute immediately, even during streaming)
 		// Extension commands manage their own LLM interaction via pi.sendMessage()
 		if (expandPromptTemplates && text.startsWith("/")) {
-			const handled = await this._tryExecuteExtensionCommand(text);
-			if (handled) {
+			const execution = this._tryExecuteExtensionCommand(text);
+			if (execution !== false) {
+				await execution;
 				// Extension command executed, no prompt to send
+				if (record) this._removeDeferredInput(record);
 				preflightResult?.("handled");
 				return;
 			}
 		}
+
+		this._throwIfPausedForWork();
 
 		if (this._compactionAbortController !== undefined) {
 			throw new Error(
@@ -2155,6 +2345,7 @@ export class AgentSession {
 			this.isStreaming ? options?.streamingBehavior : undefined,
 		);
 		if (!processedInput) {
+			if (record) this._removeDeferredInput(record);
 			preflightResult?.("handled");
 			return;
 		}
@@ -2166,6 +2357,20 @@ export class AgentSession {
 			expandedText = this._expandSkillCommand(expandedText);
 			expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 		}
+
+		if (record)
+			record.prepared = [
+				{
+					kind: "prepared",
+					message: {
+						customType: "session-handoff-input",
+						content: [{ type: "text", text: expandedText }, ...(currentImages ?? [])],
+						display: true,
+					},
+					options: { triggerTurn: true, deliverAs: options?.streamingBehavior },
+				},
+			];
+		if (record && this._admissionsFenced) return;
 
 		// If streaming, queue via steer() or followUp() based on option
 		if (this.isStreaming) {
@@ -2180,6 +2385,7 @@ export class AgentSession {
 				} else {
 					this._queueSteer(expandedText, currentImages);
 				}
+				if (record) this._removeDeferredInput(record);
 				preflightResult?.("queued");
 			});
 			if (!(typeof admission === "boolean" ? admission : await admission)) {
@@ -2211,10 +2417,28 @@ export class AgentSession {
 
 		let promptPromise: Promise<void> | undefined;
 		const admission = this._admitWork(operationGeneration, () => {
+			// Another prompt can reserve startup while input/auth preflight awaits.
+			if (this._isAgentRunActive || this.agent.signal) {
+				if (!options?.streamingBehavior) {
+					throw new Error(
+						"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
+					);
+				}
+				if (options.streamingBehavior === "followUp") this._queueFollowUp(expandedText, currentImages);
+				else this._queueSteer(expandedText, currentImages);
+				if (record) this._removeDeferredInput(record);
+				preflightResult?.("queued");
+				return;
+			}
 			promptPromise = this._startRun(
 				{ messageType: "user", prompt: expandedText, images: currentImages },
-				() => preflightResult?.("started"),
+				() => {
+					if (record) this._removeDeferredInput(record);
+					preflightResult?.("started");
+				},
 				operationGeneration,
+				record,
+				options?.preflightCancelled,
 			);
 		});
 		if (!(typeof admission === "boolean" ? admission : await admission)) {
@@ -2225,9 +2449,10 @@ export class AgentSession {
 	}
 
 	/**
-	 * Try to execute an extension command. Returns true if command was found and executed.
+	 * Unknown commands return false synchronously so settlement records raw input before yielding.
+	 * Known commands resolve to true once their handler finishes.
 	 */
-	private async _tryExecuteExtensionCommand(text: string): Promise<boolean> {
+	private _tryExecuteExtensionCommand(text: string): false | Promise<true> {
 		// Parse command name and args
 		const spaceIndex = text.indexOf(" ");
 		const commandName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
@@ -2235,22 +2460,26 @@ export class AgentSession {
 
 		const command = this._extensionRunner.getCommand(commandName);
 		if (!command) return false;
+		if ((this._admissionsFenced || this._pauseState !== "unpaused") && !command.allowedWhilePaused) {
+			throw new Error("Session is paused; resume it before submitting work.");
+		}
 
 		// Get command context from extension runner (includes session control methods)
 		const ctx = this._extensionRunner.createCommandContext();
 
-		try {
-			await command.handler(args, ctx);
-			return true;
-		} catch (err) {
-			// Emit error via extension runner
-			this._extensionRunner.emitError({
-				extensionPath: `command:${commandName}`,
-				event: "command",
-				error: err instanceof Error ? err.message : String(err),
-			});
-			return true;
-		}
+		return (async () => {
+			try {
+				await command.handler(args, ctx);
+			} catch (err) {
+				// Emit error via extension runner
+				this._extensionRunner.emitError({
+					extensionPath: `command:${commandName}`,
+					event: "command",
+					error: err instanceof Error ? err.message : String(err),
+				});
+			}
+			return true as const;
+		})();
 	}
 
 	resolveSkillCommand(text: string): ResolvedSkillCommand | undefined {
@@ -2362,30 +2591,32 @@ export class AgentSession {
 	 * Internal: Queue a steering message (already expanded, no extension command check).
 	 */
 	private _queueSteer(text: string, images?: ImageContent[]): void {
-		this._steeringMessages.push(text);
-		this._emitQueueUpdate();
-		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
-		if (images) {
-			content.push(...images);
-		}
-		this.agent.steer({
-			role: "user",
-			content,
-			timestamp: Date.now(),
-		});
+		this._queuePreparedMessages(
+			[{ role: "user", content: [{ type: "text", text }, ...(images ?? [])], timestamp: Date.now() }],
+			"steer",
+		);
 	}
 
 	/**
 	 * Internal: Queue a follow-up message (already expanded, no extension command check).
 	 */
 	private _queueFollowUp(text: string, images?: ImageContent[]): void {
-		this._followUpMessages.push(text);
-		this._emitQueueUpdate();
-		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
-		if (images) {
-			content.push(...images);
+		this._queuePreparedMessages(
+			[{ role: "user", content: [{ type: "text", text }, ...(images ?? [])], timestamp: Date.now() }],
+			"followUp",
+		);
+	}
+
+	private _queuePreparedMessages(messages: AgentMessage[], behavior: "steer" | "followUp"): void {
+		for (const message of messages) {
+			this.agent[behavior](message);
+			if (message.role === "user") {
+				const text = contentText(message.content, "");
+				if (behavior === "steer") this._steeringMessages.push(text);
+				else this._followUpMessages.push(text);
+			}
 		}
-		this.agent.followUp({ role: "user", content, timestamp: Date.now() });
+		this._emitQueueUpdate();
 	}
 
 	/**
@@ -2420,40 +2651,85 @@ export class AgentSession {
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
 		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
 	): Promise<void> {
+		return this._sendPreparedInput({ kind: "prepared", message, options });
+	}
+
+	private async _sendPreparedInput(
+		input: Extract<SessionInput, { kind: "prepared" }>,
+		onAdmission?: (disposition: PromptDisposition) => void,
+		record?: DeferredSessionInput,
+	): Promise<void> {
+		const { message, options } = input;
+		const operationGeneration = this._pauseCancellationGeneration;
+		if (this._isEmittingAgentSettled && options?.triggerTurn) {
+			this._deferredSettledInputs.push({ input });
+			onAdmission?.("queued");
+			return;
+		}
+		const transcriptOnly =
+			!options?.triggerTurn &&
+			options?.deliverAs === undefined &&
+			(!this.isStreaming || options?.triggerTurn === false);
+		if (this._admissionsFenced && !transcriptOnly) {
+			if (this._isEmittingAgentSettled) {
+				this._deferredSettledInputs.push({ input });
+				onAdmission?.("queued");
+				return;
+			}
+			if (record) return;
+			this._throwIfPausedForWork();
+		}
 		if (options?.triggerTurn || options?.deliverAs === "steer" || options?.deliverAs === "followUp") {
 			this._throwIfPausedForWork();
 		}
-		const appMessage = {
-			role: "custom" as const,
-			customType: message.customType,
-			// Untyped extensions can pass null/missing content; normalize at ingestion.
+		if (options?.triggerTurn && !this.isStreaming && this._pauseState !== "unpaused") {
+			const admitted = await this._admitWork(operationGeneration, () => {});
+			if (!admitted) throw new Error("Input cancelled before acceptance.");
+		}
+		const appMessage: CustomMessage = {
+			...message,
+			role: "custom",
 			content: message.content ?? [],
-			display: message.display,
-			details: message.details,
-			timestamp: Date.now(),
-		} satisfies CustomMessage<T>;
+			timestamp: message.timestamp ?? Date.now(),
+		};
+		const accepted = (disposition: PromptDisposition) => {
+			if (record) this._removeDeferredInput(record);
+			onAdmission?.(disposition);
+		};
 		if (options?.deliverAs === "nextTurn") {
 			this._pendingNextTurnMessages.push(appMessage);
+			accepted("queued");
 		} else if (this.isStreaming && options?.triggerTurn !== false) {
-			if (options?.deliverAs === "followUp") {
-				this.agent.followUp(appMessage);
-			} else {
-				this.agent.steer(appMessage);
-			}
+			if (options?.deliverAs === "followUp") this.agent.followUp(appMessage);
+			else this.agent.steer(appMessage);
+			accepted("queued");
 		} else if (options?.triggerTurn) {
-			if (this._isEmittingAgentSettled) {
-				this._deferredSettledActions.push(async () => await this.sendCustomMessage(message, options));
-				return;
-			}
-			await this._startRun({ messageType: "custom", message: appMessage });
+			await this._startRun(
+				{ messageType: "custom", message: appMessage },
+				() => accepted("started"),
+				operationGeneration,
+				record,
+				() => {
+					throw new Error("Input cancelled before acceptance.");
+				},
+			);
 		} else if (this.isStreaming) {
-			// Appending now would put the message between an assistant tool call and its
-			// result, which providers that validate message order reject on replay. Defer
-			// to the end of the turn. Nothing is emitted yet: message events must not
-			// describe messages the session tree does not contain.
 			this._pendingCustomMessages.push(appMessage);
+			accepted("queued");
 		} else {
-			this._appendCustomMessage(appMessage);
+			const oldLeaf = this.sessionManager.getLeafId();
+			try {
+				this._appendCustomMessage(appMessage);
+			} catch (error) {
+				// Admission transfers ownership when SessionManager buffers the
+				// body, even if persisting it subsequently fails.
+				if (this.sessionManager.getLeafId() !== oldLeaf) {
+					accepted("handled");
+					this._refreshFinalizedContext();
+				}
+				throw error;
+			}
+			accepted("handled");
 		}
 	}
 
@@ -2476,10 +2752,20 @@ export class AgentSession {
 	private _flushPendingCustomMessages(): void {
 		if (this._pendingCustomMessages.length === 0) return;
 
-		const pending = this._pendingCustomMessages;
-		this._pendingCustomMessages = [];
-		for (const appMessage of pending) {
-			this._appendCustomMessage(appMessage);
+		while (this._pendingCustomMessages.length > 0) {
+			const appMessage = this._pendingCustomMessages.shift()!;
+			const oldLeaf = this.sessionManager.getLeafId();
+			try {
+				// SessionManager buffers the entry and advances its leaf before
+				// writing. Remove only this item: a failed disk write must not
+				// replay it, and must not discard the unattempted tail.
+				this._appendCustomMessage(appMessage);
+			} catch (error) {
+				if (this.sessionManager.getLeafId() === oldLeaf) this._pendingCustomMessages.unshift(appMessage);
+				else this._refreshFinalizedContext();
+				if (this._handoffInProgress) this._handoffFlushError ??= { error };
+				throw error;
+			}
 		}
 	}
 
@@ -2557,6 +2843,152 @@ export class AgentSession {
 		return this._resourceLoader;
 	}
 
+	/** Resolve fresh input ownership at admission, not at provider completion. */
+	submitInput(input: SessionInput): Promise<InputAdmissionResult> {
+		try {
+			this._extensionRunner.assertOutsideHandler("submitInput");
+		} catch (error) {
+			return Promise.resolve({
+				disposition: "rejected",
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+		if (this._isEmittingAgentSettled) {
+			return Promise.resolve({
+				disposition: "rejected",
+				error: "Cannot submit awaitable input during settlement dispatch.",
+			});
+		}
+		return new Promise((resolve) => {
+			let admitted = false;
+			const accepted = (disposition: PromptDisposition) => {
+				admitted = true;
+				resolve({ disposition });
+			};
+			const rejected = (error: unknown) => {
+				const message = error instanceof Error ? error.message : String(error);
+				if (admitted) {
+					this._extensionRunner.emitError({ extensionPath: "<runtime>", event: "submit_input", error: message });
+				} else {
+					resolve({ disposition: "rejected", error: message });
+				}
+			};
+			const operation =
+				input.kind === "raw"
+					? this.prompt(input.text, {
+							...input.options,
+							source: input.options?.source ?? "extension",
+							preflightResult: accepted,
+							preflightCancelled: () => rejected("Input cancelled before acceptance."),
+						})
+					: this._sendPreparedInput(input, accepted);
+			void operation.catch(rejected);
+		});
+	}
+
+	private _notifyHandoffProgress(): void {
+		for (const resolve of this._handoffProgressWaiters) resolve();
+		this._handoffProgressWaiters.clear();
+	}
+
+	/** Stop the old run and transfer complete pending payloads to the caller. */
+	handoff(requestId: string): Promise<SessionHandoff> {
+		try {
+			this._extensionRunner.assertOutsideHandler("handoff");
+			const record = this._deferredInputContext.getStore();
+			if (record?.processingActive && this._deferredSettledInputs.includes(record)) {
+				throw new Error("Cannot hand off a session from its own deferred input preprocessing.");
+			}
+		} catch (error) {
+			return Promise.reject(error);
+		}
+		if (this._outstandingHandoff) {
+			if (this._outstandingHandoff.requestId === requestId) return this._outstandingHandoff.result;
+			return Promise.reject(new Error("A different handoff request is already outstanding."));
+		}
+		const wasActive = !this.isIdle;
+		this._admissionsFenced = true;
+		this._handoffFlushError = undefined;
+		this._cacheWarmer?.cancel(true);
+		this._handoffInProgress = true;
+		// Install the request before capture or any reentrant notification. Successful
+		// capture is retained by this promise before queue/status observers are called.
+		const result = Promise.resolve().then(() => this._finishHandoff(requestId, wasActive));
+		const outstanding = { requestId, result };
+		this._outstandingHandoff = outstanding;
+		void result.then(
+			() => {
+				if (this._outstandingHandoff !== outstanding) return;
+				this._setPauseState("paused");
+				this._emitQueueUpdate();
+			},
+			() => {
+				if (this._outstandingHandoff === outstanding) this._outstandingHandoff = undefined;
+			},
+		);
+		this.requestPause();
+		return result;
+	}
+
+	private async _finishHandoff(requestId: string, wasActive: boolean): Promise<SessionHandoff> {
+		try {
+			// A parked run is not idle. First wait for its complete tool boundary and
+			// any compaction already admitted before the fence was installed.
+			while (
+				(this._isAgentRunActive && this._pauseState !== "paused") ||
+				this.isCompacting ||
+				this._manualCompactionStarting
+			) {
+				await new Promise<void>((resolve) => this._handoffProgressWaiters.add(resolve));
+			}
+			this._pauseCancellationGeneration++;
+			if (this._isAgentRunActive) this._agentRunAbortRequested = true;
+			this.abortRetry();
+			if (this._isBeforeSettle) this._abortDuringBeforeSettle = true;
+			this.agent.abort();
+			// Release only the old loop's waiter, never provider admission.
+			this._releasePauseWaiter();
+			while (!this.isIdle || this._isEmittingAgentSettled || this._drainingSettledInputs) {
+				await new Promise<void>((resolve) => this._handoffProgressWaiters.add(resolve));
+			}
+			// Records are not spliced into a local batch while preprocessing. Any
+			// in-flight record finishes as handled, failed, or prepared pending work.
+			for (const record of this._deferredSettledInputs) await record.processing;
+			if (this._handoffFlushError) throw this._handoffFlushError.error;
+			this._flushPendingBashMessages();
+			this._flushPendingCustomMessages();
+			// Materialize before destructive extraction: a write failure leaves all
+			// pending payloads owned by this session.
+			this.sessionManager.ensurePersisted();
+			const sessionFile = this.sessionFile;
+			if (!sessionFile) throw new Error("Cannot hand off a session without a persisted session file.");
+			const queues = this.agent.takeQueuedMessages();
+			const nextTurn = this._pendingNextTurnMessages;
+			this._pendingNextTurnMessages = [];
+			const deferred = this._deferredSettledInputs.flatMap((record) => record.prepared ?? [record.input]);
+			this._deferredSettledInputs.length = 0;
+			this._steeringMessages = [];
+			this._followUpMessages = [];
+			return {
+				requestId,
+				sessionId: this.sessionId,
+				sessionFile,
+				leafId: this.sessionManager.getLeafId(),
+				wasActive,
+				queueModes: { steering: queues.steeringMode, followUp: queues.followUpMode },
+				pending: {
+					initial: queues.initial,
+					steering: queues.steering,
+					followUp: queues.followUp,
+					nextTurn,
+					deferred,
+				},
+			};
+		} finally {
+			this._handoffInProgress = false;
+		}
+	}
+
 	/** Request a cooperative pause after the current complete turn. */
 	requestPause(): void {
 		if (this._pauseState !== "unpaused") return;
@@ -2565,6 +2997,10 @@ export class AgentSession {
 
 	/** Resume work parked by requestPause(). */
 	resume(): void {
+		if (this._handoffInProgress) throw new Error("Cannot resume while handoff is in progress.");
+		this._outstandingHandoff = undefined;
+		if (this._admissionsFenced) this._cacheWarmer?.cancel();
+		this._admissionsFenced = false;
 		if (this._pauseState === "unpaused") return;
 		this._setPauseState("unpaused");
 		this._releasePauseWaiter();
@@ -2572,6 +3008,7 @@ export class AgentSession {
 
 	private async _waitForPauseBoundary(signal?: AbortSignal, operationGeneration?: number): Promise<void> {
 		while (this._pauseState !== "unpaused") {
+			if (this._handoffInProgress && this._agentRunAbortRequested) return;
 			if (
 				signal?.aborted ||
 				(operationGeneration !== undefined && operationGeneration !== this._pauseCancellationGeneration)
@@ -2622,7 +3059,7 @@ export class AgentSession {
 		if (cancelPendingWork) {
 			this._pauseCancellationGeneration++;
 		}
-		this._setPauseState("unpaused");
+		if (!this._handoffInProgress) this._setPauseState("unpaused");
 		this._releasePauseWaiter();
 	}
 
@@ -2961,6 +3398,7 @@ export class AgentSession {
 	 * @param customInstructions Optional instructions for the compaction summary
 	 */
 	async compact(customInstructions?: string): Promise<CompactionResult> {
+		if (this._admissionsFenced) this._throwIfPausedForWork();
 		if (this._compactionAbortController !== undefined || this._manualCompactionStarting) {
 			throw new Error("Compaction already in progress");
 		}
@@ -3314,6 +3752,7 @@ export class AgentSession {
 	 * @returns Whether the post-run loop should call `agent.continue()`
 	 */
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
+		if (this._admissionsFenced) return false;
 		const model = this.model;
 		const operationGeneration = this._pauseCancellationGeneration;
 		const settings = this.settingsManager.getCompactionSettings(model);
@@ -3568,7 +4007,10 @@ export class AgentSession {
 
 	private _applyExtensionBindings(runner: ExtensionRunner): void {
 		runner.setUIContext(this._extensionUIContext, this._extensionMode);
-		runner.bindCommandContext(this._extensionCommandContextActions);
+		runner.bindCommandContext(this._extensionCommandContextActions, {
+			handoff: (requestId) => this.handoff(requestId),
+			submitInput: (input) => this.submitInput(input),
+		});
 
 		this._extensionErrorUnsubscriber?.();
 		this._extensionErrorUnsubscriber = this._extensionErrorListener
@@ -4164,10 +4606,20 @@ export class AgentSession {
 	private _flushPendingBashMessages(): void {
 		if (this._pendingBashMessages.length === 0) return;
 
-		for (const bashMessage of this._pendingBashMessages) {
-			this.sessionManager.appendMessage(bashMessage);
+		while (this._pendingBashMessages.length > 0) {
+			const bashMessage = this._pendingBashMessages.shift()!;
+			const oldLeaf = this.sessionManager.getLeafId();
+			try {
+				// As with custom messages, disk failures occur after buffering.
+				// Keep unattempted results, but never append a buffered result twice.
+				this.sessionManager.appendMessage(bashMessage);
+			} catch (error) {
+				if (this.sessionManager.getLeafId() === oldLeaf) this._pendingBashMessages.unshift(bashMessage);
+				else this._refreshFinalizedContext();
+				if (this._handoffInProgress) this._handoffFlushError ??= { error };
+				throw error;
+			}
 		}
-		this._pendingBashMessages = [];
 		this._refreshFinalizedContext();
 	}
 
@@ -4204,6 +4656,7 @@ export class AgentSession {
 		targetId: string,
 		options: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string } = {},
 	): Promise<{ editorText?: string; cancelled: boolean; aborted?: boolean; summaryEntry?: BranchSummaryEntry }> {
+		if (this._admissionsFenced) this._throwIfPausedForWork();
 		if (this.isStreaming) {
 			throw new Error("Wait for the current response to finish before navigating the session tree.");
 		}

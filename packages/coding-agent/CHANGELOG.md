@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added fenced pending-input handoff and awaitable fresh-input admission to sessions and extension command contexts, plus `allowedWhilePaused` control commands.
 - Added `toolPreviewLines` to control collapsed tool-result previews; `0` hides previews while retaining expansion, warnings, and tool headers. Write/edit call previews are unchanged.
 - Added a Models Configuration reference generated from the `models.json` schema, listing all provider, model, model override, and compatibility fields ([#10790](https://github.com/earendil-works/pi/issues/10790))
 - Added `ctx.resolveSkillCommand()` so input handlers can resolve loaded `/skill:name` commands without duplicating Pi's parsing or resource discovery.
@@ -14,6 +15,7 @@
 
 ### Fixed
 
+- Fixed pending-input loss after recording or deferred-preflight failures, overlapping prompts falsely reporting started, and handoff observer failures invalidating captured work.
 - Fixed standalone Bun builds failing bytecode generation for extension aliases by compiling ES module bytecode.
 - Fixed native text reads allocating entire files before offset and output limits were applied, including oversized single lines.
 - Fixed compaction and branch summaries failing with "generation hit the token cap" when reasoning used most of the fixed summary output limit. Summaries now use the model's output limit, and `compaction.reserveTokens` only controls when compaction starts ([#9512](https://github.com/earendil-works/pi/issues/9512), [#9075](https://github.com/earendil-works/pi/issues/9075)).

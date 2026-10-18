@@ -56,7 +56,7 @@ import type {
 } from "@earendil-works/pi-tui";
 import type { Static, TSchema } from "typebox";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
-import type { PauseState } from "../agent-session.ts";
+import type { InputAdmissionResult, PauseState, SessionHandoff, SessionInput } from "../agent-session.ts";
 import type { BashResult } from "../bash-executor.ts";
 import type { CacheWarmingDecisionEvent, CacheWarmingDecisionEventResult } from "../cache-warmer.ts";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.ts";
@@ -411,8 +411,21 @@ export interface ExtensionCommandContext extends ExtensionContext {
 	/** Get the current base system-prompt construction options. */
 	getSystemPromptOptions(): BuildSystemPromptOptions;
 
-	/** Wait for the agent to finish streaming */
+	/** Wait for the agent to finish streaming. Do not call from an awaited lifecycle handler. */
 	waitForIdle(): Promise<void>;
+
+	/**
+	 * Stop at a persisted turn boundary and transfer pending inputs to the caller.
+	 * Leaves provider admission fenced until explicit resume. Reuse requestId to recover a lost response.
+	 * Requires a persisted session and a caller outside awaited lifecycle handlers.
+	 */
+	handoff(requestId: string): Promise<SessionHandoff>;
+
+	/**
+	 * Submit raw or prepared fresh input and await its admission, not provider-run completion.
+	 * Call outside awaited lifecycle handlers. Rejection does not transfer input ownership.
+	 */
+	submitInput(input: SessionInput): Promise<InputAdmissionResult>;
 
 	/** Start a new session, optionally with initialization. */
 	newSession(options?: {
@@ -1585,6 +1598,8 @@ export type EntryRenderer<T = unknown> = (
 
 export interface RegisteredCommand {
 	name: string;
+	/** Permit this control command while paused or handing off; it cannot bypass provider admission. */
+	allowedWhilePaused?: boolean;
 	sourceInfo: SourceInfo;
 	description?: string;
 	getArgumentCompletions?: (argumentPrefix: string) => AutocompleteItem[] | null | Promise<AutocompleteItem[] | null>;

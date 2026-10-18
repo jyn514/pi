@@ -252,6 +252,9 @@ function createExtensionAPI(
 			if (typeof options?.handler !== "function") {
 				throw new Error(`Command "/${name}" registered by extension "${extension.path}" must define handler().`);
 			}
+			if (options.allowedWhilePaused !== undefined && typeof options.allowedWhilePaused !== "boolean") {
+				throw new Error(`Command "/${name}" allowedWhilePaused must be a boolean.`);
+			}
 			extension.commands.set(name, {
 				name,
 				sourceInfo: extension.sourceInfo,

@@ -17,11 +17,14 @@ export {
 	type AgentSessionConfig,
 	type AgentSessionEvent,
 	type AgentSessionEventListener,
+	type InputAdmissionResult,
 	type ModelCycleResult,
 	type ParsedSkillBlock,
 	type PauseState,
 	type PromptOptions,
 	parseSkillBlock,
+	type SessionHandoff,
+	type SessionInput,
 	type SessionStats,
 } from "./core/agent-session.ts";
 export { readStoredCredential } from "./core/auth-storage.ts";
