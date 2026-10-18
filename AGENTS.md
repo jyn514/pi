@@ -15,6 +15,8 @@
 ## Code Quality
 
 - Preserve upstream file paths and helper placement unless a fork feature requires changing them.
+- Before adding a new fork feature, use `jj-workflow` to review upstream drift and fork-stack hygiene.
+  Keep upstream synchronization separate from feature implementation unless both are authorized.
 - Read files in full before wide-ranging changes. Do not rely on search snippets for broad changes.
 - No `any` unless absolutely necessary.
 - No runtime checks of values whose types TypeScript already guarantees (no `typeof`/`instanceof`/`Array.isArray`/shape guards on typed parameters, typed callback results or typed declarations). Validate only at decided trust boundaries (wire input, schema-checked arguments and params).
