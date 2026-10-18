@@ -15,6 +15,8 @@
 ## Code Quality
 
 - Preserve upstream file paths and helper placement unless a fork feature requires changing them.
+- Before adding a new fork feature, use `jj-workflow` to review upstream drift and fork-stack hygiene.
+  Keep upstream synchronization separate from feature implementation unless both are authorized.
 - Read files in full before wide-ranging changes. Do not rely on search snippets for broad changes.
 - No `any` unless absolutely necessary.
 - Inline single-line helpers that have only one call site.
