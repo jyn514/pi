@@ -60,7 +60,6 @@ import {
 	CONFIG_DIR_NAME,
 	detectInstallChange,
 	getAgentDir,
-	getAuthPath,
 	getDebugLogPath,
 	getDocsPath,
 	VERSION,
@@ -6163,10 +6162,10 @@ export class InteractiveMode {
 			this.footer.invalidate();
 			this.updateEditorBorderColor();
 			if (selectedModel) {
-				this.showStatus(`${actionLabel}. Selected ${selectedModel.id}. Credentials saved to ${getAuthPath()}`);
+				this.showStatus(`${actionLabel}. Selected ${selectedModel.id}. Credentials saved.`);
 				void this.maybeWarnAboutAnthropicSubscriptionAuth(selectedModel);
 			} else {
-				this.showStatus(`${actionLabel}. Credentials saved to ${getAuthPath()}`);
+				this.showStatus(`${actionLabel}. Credentials saved.`);
 				if (selectionError) {
 					this.showError(selectionError);
 				} else {
@@ -6175,7 +6174,7 @@ export class InteractiveMode {
 			}
 		};
 		if (deferSelection) {
-			this.showStatus(`${actionLabel}. Credentials saved to ${getAuthPath()}. Refreshing model catalog…`);
+			this.showStatus(`${actionLabel}. Credentials saved. Refreshing model catalog…`);
 		} else {
 			await finishAuthentication();
 		}

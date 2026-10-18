@@ -88,6 +88,7 @@ cd packages/tui
 With no arguments, `./test.sh` still runs `npm test`.
 Use `./test.sh --help` for usage.
 This isolates inherited credentials and user configuration; it is not a filesystem or network sandbox.
+The runner substitutes a disposable `secret-tool` fixture so default Linux credential tests never access your user keyring.
 Do not use real provider credentials or services in focused tests.
 
 Do not edit `CHANGELOG.md`. Changelog entries are added by maintainers.

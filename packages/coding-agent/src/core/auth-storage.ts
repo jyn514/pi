@@ -1,5 +1,5 @@
 /**
- * CredentialStore implementation backed by auth.json.
+ * CredentialStore backed by the Linux user keychain, or an explicit auth file.
  * Provider auth orchestration belongs to ModelRuntime and pi-ai Models.
  */
 
@@ -12,6 +12,7 @@ import { getAgentDir } from "../config.ts";
 import { raceWithAbortSignal } from "../utils/abort.ts";
 import { getFileRevision, normalizePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
+import { KeychainAuthStorageBackend } from "./keychain-auth-storage.ts";
 import { isCommandConfigValue, resolveConfigValue } from "./resolve-config-value.ts";
 
 type AuthStorageData = Record<string, Credential>;
@@ -156,7 +157,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 	}
 
 	async withLockAsync<T>(
-		fn: (current: string | undefined) => Promise<LockResult<T>>,
+		fn: (current: string | undefined, assertHeld: () => void) => Promise<LockResult<T>>,
 		options?: AuthOperationOptions,
 	): Promise<T> {
 		options?.signal?.throwIfAborted();
@@ -181,7 +182,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 			throwIfCompromised();
 			options?.signal?.throwIfAborted();
 			const current = existsSync(this.authPath) ? readFileSync(this.authPath, "utf-8") : undefined;
-			const { result, next } = await fn(current);
+			const { result, next } = await fn(current, throwIfCompromised);
 			throwIfCompromised();
 			options?.signal?.throwIfAborted();
 			if (next !== undefined) {
@@ -202,11 +203,11 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 }
 
 export class ReadOnlyAuthStorage implements CredentialStore {
-	private readonly authPath: string;
+	private readonly authPath: string | undefined;
 	private data: AuthStorageData | undefined;
 
-	constructor(authPath: string = join(getAgentDir(), "auth.json")) {
-		this.authPath = normalizePath(authPath);
+	constructor(authPath?: string) {
+		this.authPath = authPath === undefined ? undefined : normalizePath(authPath);
 	}
 
 	private load(): AuthStorageData {
@@ -214,13 +215,14 @@ export class ReadOnlyAuthStorage implements CredentialStore {
 
 		let parsed: unknown;
 		try {
-			parsed = JSON.parse(stripBom(readFileSync(this.authPath, "utf-8")));
+			const content = readCredentialSnapshot(this.authPath);
+			parsed = JSON.parse(stripBom(content ?? "{}"));
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") {
 				this.data = {};
 				return this.data;
 			}
-			throw new Error(`Failed to read auth.json: ${error instanceof Error ? error.message : String(error)}`);
+			throw new Error("Failed to read credentials; check your credential store");
 		}
 
 		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
@@ -282,11 +284,11 @@ export class ReadOnlyAuthStorage implements CredentialStore {
 		_fn: (current: Credential | undefined) => Promise<Credential | undefined>,
 		_options?: AuthOperationOptions,
 	): Promise<Credential | undefined> {
-		throw new Error("Read-only credential storage cannot modify auth.json");
+		throw new Error("Read-only credential storage cannot modify credentials");
 	}
 
 	async delete(_providerId: string, _options?: AuthOperationOptions): Promise<void> {
-		throw new Error("Read-only credential storage cannot modify auth.json");
+		throw new Error("Read-only credential storage cannot modify credentials");
 	}
 }
 
@@ -323,7 +325,7 @@ export class InMemoryAuthStorageBackend implements AuthStorageBackend {
 }
 
 /**
- * Credential storage backed by a JSON file.
+ * Credential storage; default Linux storage uses Secret Service.
  */
 export class AuthStorage implements CredentialStore {
 	private storage: AuthStorageBackend;
@@ -335,6 +337,8 @@ export class AuthStorage implements CredentialStore {
 		this.authPath = authPath;
 		this.readState =
 			authPath && sharedAuthFileReadState?.authPath === authPath ? sharedAuthFileReadState.readState : { data: {} };
+		// Keychain reads are async during normal startup, and never serve a cached fallback.
+		if (storage instanceof KeychainAuthStorageBackend) return;
 		if (authPath && !sharedAuthFileReadState) {
 			sharedAuthFileReadState = { authPath, readState: this.readState };
 		}
@@ -345,9 +349,19 @@ export class AuthStorage implements CredentialStore {
 		this.reload();
 	}
 
-	static create(authPath: string = join(getAgentDir(), "auth.json")): AuthStorage {
-		const normalizedAuthPath = normalizePath(authPath);
-		return new AuthStorage(new FileAuthStorageBackend(normalizedAuthPath), normalizedAuthPath);
+	static create(authPath?: string): AuthStorage {
+		if (authPath === undefined) return AuthStorage.createDefault();
+		const backend = defaultAuthBackend(authPath);
+		return new AuthStorage(backend, normalizePath(authPath));
+	}
+
+	/** Use the platform default store, scoped to the selected agent directory. */
+	static createDefault(agentDir: string = getAgentDir()): AuthStorage {
+		const backend = defaultAuthBackend(undefined, agentDir);
+		return new AuthStorage(
+			backend,
+			backend instanceof KeychainAuthStorageBackend ? undefined : normalizePath(join(agentDir, "auth.json")),
+		);
 	}
 
 	static fromStorage(storage: AuthStorageBackend): AuthStorage {
@@ -364,7 +378,11 @@ export class AuthStorage implements CredentialStore {
 		if (!content) {
 			return {};
 		}
-		return JSON.parse(stripBom(content)) as AuthStorageData;
+		try {
+			return JSON.parse(stripBom(content)) as AuthStorageData;
+		} catch {
+			throw new Error("Invalid credential JSON; contents withheld");
+		}
 	}
 
 	private updateReadState(data: AuthStorageData, revision?: string): void {
@@ -385,7 +403,8 @@ export class AuthStorage implements CredentialStore {
 				return { result: undefined };
 			});
 			this.updateReadState(this.parseStorageData(content), revision);
-		} catch {
+		} catch (error) {
+			if (this.storage instanceof KeychainAuthStorageBackend) throw error;
 			// Preserve the last valid in-memory snapshot.
 		}
 	}
@@ -401,11 +420,11 @@ export class AuthStorage implements CredentialStore {
 
 	private async readLatestData(options?: AuthOperationOptions): Promise<AuthStorageData> {
 		options?.signal?.throwIfAborted();
-		if (!this.authPath) {
+		if (!this.authPath && !(this.storage instanceof KeychainAuthStorageBackend)) {
 			const reload = this.reloadFromStorageAsync(options);
 			return options?.signal ? reload : reload.catch(() => this.readState.data);
 		}
-		const revision = getFileRevision(this.authPath);
+		const revision = this.authPath ? getFileRevision(this.authPath) : undefined;
 		if (revision !== undefined && revision === this.readState.revision) return this.readState.data;
 		if (!this.readState.reload) {
 			const controller = new AbortController();
@@ -429,7 +448,9 @@ export class AuthStorage implements CredentialStore {
 		reload.readers++;
 		try {
 			const result = raceWithAbortSignal(reload.promise, options?.signal);
-			return options?.signal ? await result : await result.catch(() => this.readState.data);
+			return options?.signal || this.storage instanceof KeychainAuthStorageBackend
+				? await result
+				: await result.catch(() => this.readState.data);
 		} finally {
 			reload.readers--;
 			if (reload.readers === 0 && this.readState.reload === reload) {
@@ -491,17 +512,31 @@ export class AuthStorage implements CredentialStore {
 }
 
 /**
- * One-off synchronous read of a stored credential from an auth.json file,
+ * One-off synchronous read of a stored credential from the default store or an explicit file,
  * without instantiating a store or resolving configured key values.
  */
-export function readStoredCredential(
-	providerId: string,
-	authPath: string = join(getAgentDir(), "auth.json"),
-): Credential | undefined {
+export function readStoredCredential(providerId: string, authPath?: string): Credential | undefined {
 	try {
-		const data = JSON.parse(stripBom(readFileSync(normalizePath(authPath), "utf-8"))) as AuthStorageData;
+		const content = readCredentialSnapshot(authPath);
+		const data = JSON.parse(stripBom(content ?? "{}")) as AuthStorageData;
 		return data[providerId];
 	} catch {
 		return undefined;
 	}
+}
+
+function defaultAuthBackend(authPath?: string, agentDir: string = getAgentDir()): AuthStorageBackend {
+	const profile = normalizePath(authPath ?? join(agentDir, "auth.json"));
+	if (process.platform === "linux" && authPath === undefined) {
+		// Reuse the existing heartbeat lock without persisting credentials in its sentinel.
+		return new KeychainAuthStorageBackend(profile, new FileAuthStorageBackend(`${profile}.keychain`));
+	}
+	return new FileAuthStorageBackend(profile);
+}
+
+function readCredentialSnapshot(authPath?: string): string | undefined {
+	const backend = defaultAuthBackend(authPath);
+	return backend instanceof KeychainAuthStorageBackend
+		? backend.readSnapshot()
+		: readFileSync(normalizePath(authPath ?? join(getAgentDir(), "auth.json")), "utf-8");
 }

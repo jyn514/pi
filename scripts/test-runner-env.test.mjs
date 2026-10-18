@@ -129,7 +129,8 @@ test("explicit commands preserve argv and package CWD while isolating environmen
 	assert.deepEqual(output.argv, args);
 	assert.equal(output.cwd, context.cwd);
 	assert.equal(output.env.PWD, context.cwd);
-	assert.equal(output.env.PATH, context.env.PATH);
+	assert.equal(output.env.PATH, [join(dirname(output.env.HOME), "bin"), context.env.PATH].join(delimiter));
+	assert.equal(output.env.TEST_KEYCHAIN_DIRECTORY, join(dirname(output.env.HOME), "keychain"));
 	for (const name of ["RG_REAL", "NODE_EXTRA_CA_CERTS", "CI", "GITHUB_ACTIONS"]) {
 		assert.equal(output.env[name], context.env[name]);
 	}

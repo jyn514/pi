@@ -3,6 +3,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
+import { AuthStorage } from "./auth-storage.ts";
 import type { SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { ModelRuntime } from "./model-runtime.ts";
 import {
@@ -140,7 +141,7 @@ export async function createAgentSessionServices(
 	const modelRuntime =
 		options.modelRuntime ??
 		(await ModelRuntime.create({
-			authPath: join(agentDir, "auth.json"),
+			credentials: AuthStorage.createDefault(agentDir),
 			modelsPath: join(agentDir, "models.json"),
 			signal: options.modelRuntimeSignal,
 		}));

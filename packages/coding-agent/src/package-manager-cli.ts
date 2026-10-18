@@ -27,6 +27,7 @@ import {
 	type SelfUpdatePackageTarget,
 	VERSION,
 } from "./config.ts";
+import { AuthStorage } from "./core/auth-storage.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { DefaultPackageManager } from "./core/package-manager.ts";
@@ -607,7 +608,7 @@ async function refreshModelCatalogs(agentDir: string): Promise<void> {
 	const timeout = setTimeout(() => controller.abort(), 15_000);
 	try {
 		const modelRuntime = await ModelRuntime.create({
-			authPath: join(agentDir, "auth.json"),
+			credentials: AuthStorage.createDefault(agentDir),
 			modelsPath: join(agentDir, "models.json"),
 			allowModelNetwork: false,
 			signal: controller.signal,

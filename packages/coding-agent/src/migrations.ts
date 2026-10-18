@@ -19,6 +19,8 @@ const EXTENSIONS_DOC_URL = "https://github.com/earendil-works/pi/blob/main/packa
  * @returns Array of provider names that were migrated
  */
 export function migrateAuthToAuthJson(): string[] {
+	// Linux uses a fresh keychain login; do not create or rewrite legacy plaintext credentials.
+	if (process.platform === "linux") return [];
 	const agentDir = getAgentDir();
 	const authPath = join(agentDir, "auth.json");
 	const oauthPath = join(agentDir, "oauth.json");
