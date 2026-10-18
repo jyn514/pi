@@ -1,6 +1,13 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { deflateSync } from "node:zlib";
-import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, type ImageContent, type TextContent } from "@earendil-works/pi-ai";
+import { PhotonImage } from "@silvia-odwyer/photon-node";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
+import { SessionManager } from "../src/core/session-manager.ts";
+import { createHarness as createSessionHarness, type Harness as SessionHarness } from "./suite/harness.ts";
 import { createHarness, type Harness } from "./test-harness.ts";
 
 function crc32(data: Buffer): number {
@@ -90,5 +97,167 @@ describe("AgentSession queued message images", () => {
 		expect(sentImages.length).toBeGreaterThan(0);
 		expect(sentImages.some((block) => block.data === image.data)).toBe(false);
 		expect(harness.session.pendingMessageCount).toBe(0);
+	});
+});
+
+function deferred() {
+	let resolve!: () => void;
+	const promise = new Promise<void>((done) => {
+		resolve = done;
+	});
+	return { promise, resolve };
+}
+
+function expectResized(content: string | (TextContent | ImageContent)[], original: ImageContent): void {
+	if (typeof content === "string") throw new Error("Expected image content");
+	const images = content.filter((part): part is ImageContent => part.type === "image");
+	expect(images).toHaveLength(1);
+	expect(images[0].data).not.toBe(original.data);
+	const decoded = PhotonImage.new_from_byteslice(Buffer.from(images[0].data, "base64"));
+	try {
+		expect([decoded.get_width(), decoded.get_height()]).toEqual([267, 2000]);
+	} finally {
+		decoded.free();
+	}
+	const text = content
+		.filter((part) => part.type === "text")
+		.map((part) => part.text)
+		.join("\n");
+	expect(text.match(/original 1200x9000, displayed at 267x2000/g)).toHaveLength(1);
+}
+
+describe("AgentSession prepared input images", () => {
+	const harnesses: SessionHarness[] = [];
+	const directories: string[] = [];
+
+	afterEach(() => {
+		for (const harness of harnesses.splice(0)) harness.cleanup();
+		for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+	});
+
+	const deliveries = ["initial", "steer", "followUp", "nextTurn"] as const;
+	const shapes = ["text-first", "image-first", "image-only"] as const;
+	const cases = deliveries.flatMap((delivery) => shapes.map((shape) => ({ delivery, shape })));
+
+	it.each(cases)(
+		"normalizes $shape prepared input at $delivery delivery before events, persistence, and the provider",
+		async ({ delivery, shape }) => {
+			const entered = deferred();
+			const release = deferred();
+			const harness = await createSessionHarness({
+				settings: { images: { autoResize: true }, compaction: { enabled: false }, retry: { enabled: false } },
+				tools: [
+					{
+						name: "hold",
+						label: "Hold",
+						description: "Wait for queued input",
+						parameters: Type.Object({}),
+						execute: async () => {
+							entered.resolve();
+							await release.promise;
+							return { content: [], details: {} };
+						},
+					},
+				],
+			});
+			harnesses.push(harness);
+			const image: ImageContent = { type: "image", data: createPng(1200, 9000), mimeType: "image/png" };
+			const text: TextContent = { type: "text", text: "prepared payload" };
+			const content = shape === "image-only" ? [image] : shape === "image-first" ? [image, text] : [text, image];
+			let sent: (TextContent | ImageContent)[] | undefined;
+			harness.setResponses([
+				...(delivery === "steer" || delivery === "followUp"
+					? [fauxAssistantMessage(fauxToolCall("hold", {}), { stopReason: "toolUse" })]
+					: []),
+				// Follow-up input waits for the tool-result response to finish before delivery.
+				...(delivery === "followUp" ? [fauxAssistantMessage("tool completed")] : []),
+				(context) => {
+					const message = context.messages.find(
+						(message) =>
+							typeof message.content !== "string" && message.content.some((part) => part.type === "image"),
+					);
+					if (message && typeof message.content !== "string")
+						sent = message.content.filter(
+							(part): part is TextContent | ImageContent => part.type === "text" || part.type === "image",
+						);
+					return fauxAssistantMessage("done");
+				},
+			]);
+			const running = delivery === "steer" || delivery === "followUp" ? harness.session.prompt("start") : undefined;
+			try {
+				if (running) await entered.promise;
+				const result = await harness.session.submitInput({
+					kind: "prepared",
+					message: { customType: "prepared-images", content, display: true, details: { shape } },
+					options: delivery === "initial" ? { triggerTurn: true } : { triggerTurn: true, deliverAs: delivery },
+				});
+				expect(result).toEqual({ disposition: delivery === "initial" ? "started" : "queued" });
+			} finally {
+				release.resolve();
+			}
+			if (delivery === "nextTurn") await harness.session.prompt("deliver prepared context");
+			await running;
+			await harness.session.waitForIdle();
+			expect(sent).toBeDefined();
+			expectResized(sent!, image);
+			const persisted = harness.sessionManager
+				.getEntries()
+				.find((entry) => entry.type === "custom_message" && entry.customType === "prepared-images");
+			if (persisted?.type !== "custom_message") throw new Error("Missing prepared input in transcript");
+			expectResized(persisted.content, image);
+			expect(persisted.details).toEqual({ shape });
+			const started = harness
+				.eventsOfType("message_start")
+				.find((event) => event.message.role === "custom" && event.message.customType === "prepared-images");
+			if (started?.message.role !== "custom") throw new Error("Missing prepared message_start");
+			expectResized(started.message.content, image);
+			expect(harness.session.pendingMessageCount).toBe(0);
+		},
+	);
+
+	it("normalizes captured image-only steering input after reopening and prepared nextTurn replay", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "pi-prepared-images-"));
+		directories.push(directory);
+		const original = await createSessionHarness({ sessionManager: SessionManager.create(directory, directory) });
+		harnesses.push(original);
+		const image: ImageContent = { type: "image", data: createPng(1200, 9000), mimeType: "image/png" };
+		await original.session.steer("", [image]);
+		expect(original.session.pendingMessageCount).toBe(1);
+		const saved = await original.session.handoff("prepared-images");
+		expect(original.session.pendingMessageCount).toBe(0);
+		expect(saved.pending.steering).toHaveLength(1);
+		const captured = saved.pending.steering[0];
+		if (captured.role !== "user") throw new Error("Expected captured user input");
+		const reopened = await createSessionHarness({ sessionManager: SessionManager.open(saved.sessionFile) });
+		harnesses.push(reopened);
+		let sent: (TextContent | ImageContent)[] | undefined;
+		reopened.setResponses([
+			(context) => {
+				const message = context.messages.find(
+					(message) =>
+						typeof message.content !== "string" && message.content.some((part) => part.type === "image"),
+				);
+				if (message && typeof message.content !== "string")
+					sent = message.content.filter(
+						(part): part is TextContent | ImageContent => part.type === "text" || part.type === "image",
+					);
+				return fauxAssistantMessage("recovered");
+			},
+		]);
+		expect(
+			await reopened.session.submitInput({
+				kind: "prepared",
+				message: { customType: "replayed-images", content: captured.content, display: true },
+				options: { deliverAs: "nextTurn" },
+			}),
+		).toEqual({ disposition: "queued" });
+		await reopened.session.prompt("continue");
+		expectResized(sent!, image);
+		const persisted = SessionManager.open(saved.sessionFile)
+			.getEntries()
+			.find((entry) => entry.type === "custom_message" && entry.customType === "replayed-images");
+		if (persisted?.type !== "custom_message") throw new Error("Missing replayed input on disk");
+		expectResized(persisted.content, image);
+		expect(reopened.session.pendingMessageCount).toBe(0);
 	});
 });

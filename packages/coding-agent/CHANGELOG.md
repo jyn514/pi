@@ -8,6 +8,7 @@
 
 ### Added
 
+- Added fenced pending-input handoff and awaitable fresh-input admission to sessions and extension command contexts, plus `allowedWhilePaused` control commands.
 - Added `toolPreviewLines` to control collapsed tool-result previews; `0` hides previews while retaining expansion, warnings, and tool headers. Write/edit call previews are unchanged.
 
 - `pi update` now lists each updated package with its npm version or git commit change, for example `npm:foo 1.2.0 -> 1.3.0`, and prints `Packages are already up to date` when nothing changed. When nothing changed but an update printed a warning, for example because npm left the old version installed after resolving stale registry metadata, it prints `No packages were updated, see the warnings above` instead; in offline mode it prints `Skipped package updates (offline mode)`. `PackageManager.update()` reports each changed package as a new `result` progress event whose `message` holds that line ([#11707](https://github.com/earendil-works/pi/pull/11707), [#11711](https://github.com/earendil-works/pi/pull/11711))
@@ -179,6 +180,7 @@
 
 ### Fixed
 
+- Fixed pending-input loss after recording or deferred-preflight failures, overlapping prompts falsely reporting started, and handoff observer failures invalidating captured work.
 - Fixed standalone Bun builds failing bytecode generation for extension aliases by compiling ES module bytecode.
 - Fixed native text reads allocating entire files before offset and output limits were applied, including oversized single lines.
 - Fixed compaction and branch summaries failing with "generation hit the token cap" when reasoning used most of the fixed summary output limit. Summaries now use the model's output limit, and `compaction.reserveTokens` only controls when compaction starts ([#9512](https://github.com/earendil-works/pi/issues/9512), [#9075](https://github.com/earendil-works/pi/issues/9075)).

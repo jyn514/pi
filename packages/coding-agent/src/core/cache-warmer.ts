@@ -161,6 +161,7 @@ interface ActiveRun extends CacheWarmRequest {
  */
 export class CacheWarmer {
 	private run?: ActiveRun;
+	private suspended = false;
 	private inactive: CacheWarmingStatus;
 	private readonly models: Pick<ModelRuntime, "streamSimple">;
 	private readonly sessionManager: Pick<SessionManager, "appendUsage" | "getBranch">;
@@ -204,6 +205,7 @@ export class CacheWarmer {
 	/** Keep the prompt cache entry written by `request` warm while `isCurrent` holds. */
 	start(request: CacheWarmRequest, isCurrent: () => boolean): void {
 		this.clearRun();
+		if (this.suspended) return;
 		const mode = this.getMode();
 		if (mode === "off") {
 			this.stop("cache warming disabled");
@@ -264,8 +266,10 @@ export class CacheWarmer {
 		if (reason) this.stop(reason);
 	}
 
-	cancel(): void {
-		this.stop("inactive");
+	/** Suspend also prevents an already-admitted session request from rearming warming. */
+	cancel(suspend = false): void {
+		this.suspended = suspend;
+		this.stop(suspend ? "session handoff" : "inactive");
 	}
 
 	private clearRun(): void {
