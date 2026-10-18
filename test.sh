@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+usage() {
+	printf 'Usage: %s [-- <command> <args...>]\n' "$0"
+	printf 'With no arguments, run npm test. Commands run from the caller working directory.\n'
+}
+
+if [[ $# -eq 0 ]]; then
+	set -- npm test
+elif [[ $# -eq 1 && ( "$1" == --help || "$1" == -h ) ]]; then
+	usage
+	exit 0
+elif [[ "$1" == -- && $# -gt 1 && -n "$2" ]]; then
+	shift
+else
+	printf 'Expected no arguments or -- followed by a command.\n' >&2
+	usage >&2
+	exit 2
+fi
+
 # Isolate user resources, credentials, temporary files, and tool configuration.
 temp_parent="${TMPDIR:-/tmp}"
 temp_parent="${temp_parent%/}"
@@ -81,4 +99,4 @@ for name in CI GITHUB_ACTIONS; do
 done
 
 echo "Running tests without API keys in isolated home: $test_root/home"
-env -i "${test_env[@]}" npm test
+env -i "${test_env[@]}" "$@"

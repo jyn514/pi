@@ -49,9 +49,12 @@ Binding for Chord v2 (`packages/chord/src/`) and its tests, when writing and whe
 - `apps/p2` is outside the root check and the root tests. After p2 changes also run `cd apps/p2 && npm run check`; p2's suite is `cd apps/p2 && npm test` (TUI tests need Node 26, browser tests need `CHROMIUM_BIN`).
 - Run `npm run build` whenever something needs built output (`dist/`): tests or benchmarks that import built packages, Durable's workerd suite. The full suites of Chord and Durable need it: Chord's tests that start Node processes or bundle with esbuild load workspace packages from `dist/` (the rest run from source by its vitest config), and Durable imports pi-ai's `utils/*`, which have no source export. Never use it to type check or lint: that is `npm run check`, the preferred check.
 - Never run `npm test` unless requested by the user.
-- Never run the full vitest suite directly: it includes e2e tests that activate when endpoint/auth env vars are present. For all non-e2e tests, run `./test.sh` from the repo root. It runs `packages/*` only. Otherwise run specific tests from the package root:
-  - Vitest: run from the package root so its package-specific aliases apply: `node ../../node_modules/vitest/dist/cli.js --run test/specific.test.ts`. Running from the repository root can resolve stale package artifacts and produce misleading missing-export failures.
-  - `packages/tui` (`node:test`): `node --test test/specific.test.ts`
+- Never run the full Vitest suite directly: e2e tests activate when endpoint/auth env vars are present.
+- Run focused tests through `test.sh -- <command> <args...>` to isolate inherited credentials and user state.
+  Follow [Focused tests](CONTRIBUTING.md#focused-tests) for package-local Vitest and `node:test` commands.
+  Preserve the package working directory so its aliases apply; root-level Vitest can resolve stale package artifacts.
+  For an authorized full non-e2e run, use `./test.sh` from the repository root.
+  Its workspace suite covers `packages/*`, not `apps/p2`.
 - If you create or modify a test file, run it and iterate on test or implementation until it passes.
 - For `packages/coding-agent/test/suite/`, use `test/suite/harness.ts` + the faux provider. No real provider APIs, keys, or paid tokens.
 - When regressions tests for fixing a github issue, add a comment with the github issue number next to the test.
