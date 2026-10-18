@@ -27,6 +27,11 @@ git_askpass="$(type -P false)"
 readonly temp_parent test_root git_askpass
 
 mkdir -p "$test_root/home/.config" "$test_root/tmp" "$test_root/cache/npm"
+# Default Linux credentials use Secret Service. Keep all tests off the real user bus.
+script_dir="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+mkdir -p "$test_root/bin" "$test_root/keychain"
+cp "$script_dir/packages/coding-agent/test/fixtures/keychain/secret-tool.mjs" "$test_root/bin/secret-tool"
+chmod 700 "$test_root/bin/secret-tool"
 # Mark the generated root so cleanup can verify ownership before deleting it.
 touch "$test_root/.pi-test-owned" "$test_root/npm-userconfig" "$test_root/npm-globalconfig"
 
@@ -56,7 +61,8 @@ trap cleanup EXIT
 
 # Start from an empty environment and allow only required platform and test settings.
 test_env=(
-	"PATH=$PATH"
+	"PATH=$test_root/bin:$PATH"
+	"TEST_KEYCHAIN_DIRECTORY=$test_root/keychain"
 	"PWD=$PWD"
 	"HOME=$test_root/home"
 	"USERPROFILE=$test_root/home"

@@ -9,13 +9,29 @@ Use `/login [provider]` to see the methods supported by a provider. Amazon Bedro
 
 ## Authenticate interactively
 
-Run `/login` and select a provider. Pi guides you through its OAuth or API-key flow and saves the resulting credential in [`auth.json`](configuration.md#agent-directory).
+Run `/login` and select a provider.
+Pi guides you through its OAuth or API-key flow and saves the resulting credential in its credential store.
+On Linux, this fork uses your user Secret Service keyring through `secret-tool` (the `libsecret-tools` package).
+Your desktop keyring must be available and unlocked; failures do not fall back to plaintext files.
+On other platforms, the default remains [`auth.json`](configuration.md#agent-directory).
 
 On a remote or headless machine, an OAuth callback may not reach the local process. When prompted, paste the final redirect URL or authorization code back into Pi.
 
 Run `/logout` and select a provider to remove its stored credential. This does not unset environment variables, remove authentication from `models.json`, or revoke the credential at the provider.
 
-`auth.json` can contain API keys and OAuth tokens. Keep it private and do not commit it.
+On Linux, log in again after upgrading: existing `auth.json` credentials are ignored, not migrated or deleted.
+Once the new login works, remove any old plaintext credentials you no longer need.
+Login, logout, OAuth refresh, and `pi auth` commands use the same keychain item.
+The item has service `pi-coding-agent` and a profile attribute containing the normalized `<agent-dir>/auth.json` path.
+Different agent directories use separate items.
+Only a secret-free `auth.json.keychain` sentinel and its heartbeat lock are written to the agent directory.
+Writes hold the existing cross-process lock across the entire refresh callback and verify keychain read-back.
+Secrets reach `secret-tool` through stdin, never command arguments.
+
+SDK callers can supply `ModelRuntime.create({ authPath })` to select an explicit credential file.
+`createAgentSession({ agentDir })` uses the platform default for that directory.
+Explicit credential files can contain API keys and OAuth tokens; keep them private and do not commit them.
+This change covers model-provider credentials; MCP credentials retain their separate storage.
 
 ## Use an API key from the environment
 
@@ -70,7 +86,7 @@ With no key or token set, Anthropic uses workload identity federation when `ANTH
 
 ## Load an API key from a command
 
-To use a secret manager without writing the resolved key to disk, set a provider's `key` in `auth.json` to a command prefixed with `!`:
+For file-backed credentials on other platforms or with an explicit SDK file, set a provider's `key` in `auth.json` to a command prefixed with `!`:
 
 ```json
 {

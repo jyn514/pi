@@ -14,7 +14,8 @@ The agent directory is shown as `<agent-dir>` below. Set its location with the `
 | `<agent-dir>/keybindings.json` | Custom terminal UI and application [keybindings](keybindings.md). |
 | `<agent-dir>/mcp.json` | [MCP servers](mcp.md) available in every project. |
 | `<agent-dir>/models.json` | [Compatible endpoints, models, and model overrides](models.md#configure-a-compatible-endpoint). |
-| `<agent-dir>/auth.json` | Saved API keys and OAuth credentials. |
+| `<agent-dir>/auth.json` | Saved API keys and OAuth credentials on non-Linux platforms or with an explicit SDK file path. Linux defaults use the [user keychain](providers.md#authenticate-interactively). |
+| `<agent-dir>/auth.json.keychain` | Secret-free Linux keychain lock sentinel; its `.lock` directory serializes credential refresh. |
 | `<agent-dir>/AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, or `CLAUDE.MD` | User instructions applied across working directories. |
 | `<agent-dir>/SYSTEM.md` | Replaces Pi’s default system prompt. |
 | `<agent-dir>/APPEND_SYSTEM.md` | Adds instructions to Pi’s system prompt. |
