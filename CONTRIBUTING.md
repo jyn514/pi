@@ -66,6 +66,30 @@ npm run check
 
 Both must pass.
 
+### Focused tests
+
+Use `./test.sh -- <command> <args...>` for focused tests.
+It uses the same isolated home, temporary files, and credential-free environment as `./test.sh`.
+The command runs from your current working directory; arguments are passed unchanged and its exit status is preserved.
+For Vitest, run from the package directory so package-specific aliases apply:
+
+```bash
+cd packages/coding-agent
+../../test.sh -- node ../../node_modules/vitest/dist/cli.js --run test/your-test.test.ts
+```
+
+For packages using `node:test`, run the selected file from the package directory:
+
+```bash
+cd packages/tui
+../../test.sh -- node --test test/your-test.test.ts
+```
+
+With no arguments, `./test.sh` still runs `npm test`.
+Use `./test.sh --help` for usage.
+This isolates inherited credentials and user configuration; it is not a filesystem or network sandbox.
+Do not use real provider credentials or services in focused tests.
+
 Do not edit `CHANGELOG.md`. Changelog entries are added by maintainers.
 
 If you are adding a new provider to `packages/ai`, see `AGENTS.md` for required tests.
