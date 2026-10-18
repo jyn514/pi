@@ -456,6 +456,10 @@ pi.registerEntryRenderer("status-card", (entry, { outputPadY }, theme) => {
 });
 ```
 
+In fullscreen mode, left-clicking a custom message renderer's output toggles its `expanded` state unless a child component handles the event first.
+The configurable tool-output expansion action (Ctrl+O by default) also controls custom messages.
+The default Markdown fallback already shows the full message and does not toggle on click.
+
 Tool `renderCall` and `renderResult` callbacks also receive `context.outputPadY: 0 | 1`. The default tool shell handles padding; a tool using `renderShell: "self"` owns its framing and should honor this value. See [`outputPadY`](settings.md#terminal-and-display) and [`message-renderer.ts`](../examples/extensions/message-renderer.ts).
 
 <a id="error-handling"></a>
