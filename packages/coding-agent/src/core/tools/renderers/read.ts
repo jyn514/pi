@@ -13,6 +13,7 @@ import { getReadmePath } from "../../../config.ts";
 import { keyHint, keyText } from "../../../modes/interactive/components/keybinding-hints.ts";
 import { getLanguageFromPath, highlightCode, type Theme } from "../../../modes/interactive/theme/theme.ts";
 import { formatPathRelativeToCwdOrAbsolute } from "../../../utils/paths.ts";
+import { supportsLanguage } from "../../../utils/syntax-highlight.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../../extensions/types.ts";
 import { resolveToCwd } from "../path-utils.ts";
 import type { ReadToolDetails } from "../read.ts";
@@ -123,10 +124,14 @@ function formatReadResult(
 	const rawPath = str(args?.file_path ?? args?.path);
 	const output = getTextOutput(result, showImages);
 	const lang = !isError && rawPath ? getLanguageFromPath(rawPath) : undefined;
-	const renderedLines = lang ? highlightCode(replaceTabs(output), lang) : output.split("\n");
-	const lines = trimTrailingEmptyLines(renderedLines);
+	const sourceLines = output.split("\n");
+	// Supported grammars leave empty lines empty. The unsupported-language fallback colors even
+	// empty lines, so retain its existing trailing-blank behavior when counting the result.
+	const lines = lang && !supportsLanguage(lang) ? sourceLines : trimTrailingEmptyLines(sourceLines);
 	const maxLines = options.expanded ? lines.length : (options.toolPreviewLines ?? 10);
-	const displayLines = lines.slice(0, maxLines);
+	const displayLines = lang
+		? highlightCode(replaceTabs(output), lang, Math.min(maxLines, lines.length))
+		: lines.slice(0, maxLines);
 	const remaining = lines.length - maxLines;
 	let text = `\n${displayLines.map((line) => (lang ? replaceTabs(line) : theme.fg("toolOutput", replaceTabs(line)))).join("\n")}`;
 	if (remaining > 0) {
