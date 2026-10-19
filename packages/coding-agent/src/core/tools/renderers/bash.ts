@@ -60,7 +60,7 @@ function rebuildBashResultRenderComponent(
 		if (options.expanded) {
 			component.addChild(new Text(`${outputPadY > 0 ? "\n" : ""}${styledOutput}`, 0, 0));
 		} else if (options.toolPreviewLines === 0) {
-			// Do not construct VisualLinePreview: keeping the last zero lines would use slice(-0).
+			// Hidden output needs no wrapping or hidden-line count.
 			component.addChild(
 				new Text(
 					`${outputPadY > 0 ? "\n" : ""}${theme.fg("muted", "... (output hidden,")} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`,

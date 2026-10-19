@@ -77,6 +77,8 @@ export interface HighlightOptions {
 	ignoreIllegals?: boolean;
 	languageSubset?: string[];
 	theme?: HighlightTheme;
+	/** Nonnegative line budget for formatting only; grammar matching still sees the entire source. */
+	maxOutputLines?: number;
 }
 
 const SPAN_CLOSE = "</span>";
@@ -205,12 +207,24 @@ export function renderHighlightedHtml(html: string, theme: HighlightTheme = {}):
 }
 
 export function highlight(code: string, options: HighlightOptions = {}): string {
-	const html = options.language
+	if (options.maxOutputLines === 0) return "";
+	let html = options.language
 		? hljs.highlight(code, {
 				language: options.language,
 				ignoreIllegals: options.ignoreIllegals,
 			}).value
 		: hljs.highlightAuto(code, options.languageSubset).value;
+	if (options.maxOutputLines !== undefined) {
+		// highlight.js preserves source newlines and escapes source markup. Cut its HTML, not the
+		// source: hidden tokens can determine visible scopes through arbitrarily distant lookahead.
+		let end = -1;
+		for (let line = 0; line < options.maxOutputLines; line++) {
+			end = html.indexOf("\n", end + 1);
+			if (end === -1) break;
+		}
+		if (end !== -1) html = html.slice(0, end);
+	}
+	// A cut can leave scopes open; the renderer flushes each visible fragment with its active scope.
 	return renderHighlightedHtml(html, options.theme);
 }
 

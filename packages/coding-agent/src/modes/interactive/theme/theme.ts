@@ -925,26 +925,32 @@ function getCliHighlightTheme(t: Theme): CliHighlightTheme {
 
 /**
  * Highlight code with syntax coloring based on file extension or language.
- * Returns array of highlighted lines.
+ * Returns array of highlighted lines. An optional nonnegative output budget limits formatting,
+ * not the source available to grammar matching and lookahead.
  */
-export function highlightCode(code: string, lang?: string): string[] {
+export function highlightCode(code: string, lang?: string, maxOutputLines?: number): string[] {
+	if (maxOutputLines === 0) return [];
 	// Validate language before highlighting to avoid stderr spam from cli-highlight
 	const validLang = lang && supportsLanguage(lang) ? lang : undefined;
 	// Skip highlighting when no valid language is specified. cli-highlight's
 	// auto-detection is unreliable and can misidentify prose as AppleScript,
 	// LiveCodeServer, etc., coloring random English words as keywords.
 	if (!validLang) {
-		return code.split("\n").map((line) => theme.fg("mdCodeBlock", line));
+		return code
+			.split("\n")
+			.slice(0, maxOutputLines)
+			.map((line) => theme.fg("mdCodeBlock", line));
 	}
 	const opts = {
 		language: validLang,
 		ignoreIllegals: true,
 		theme: getCliHighlightTheme(theme),
+		maxOutputLines,
 	};
 	try {
 		return highlight(code, opts).split("\n");
 	} catch {
-		return code.split("\n");
+		return code.split("\n").slice(0, maxOutputLines);
 	}
 }
 

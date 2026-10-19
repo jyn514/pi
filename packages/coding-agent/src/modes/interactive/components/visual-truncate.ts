@@ -3,7 +3,7 @@
  * Used by tool renderers and bash-execution.ts for consistent behavior.
  */
 
-import { type Component, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { type Component, truncateToWidth, visibleWidth, wrapTextWithAnsiLines } from "@earendil-works/pi-tui";
 
 export interface VisualTruncateResult {
 	/** The visual lines to display */
@@ -32,23 +32,36 @@ export function truncateToVisualLines(
 	paddingX: number = 0,
 	keep: "start" | "end" = "end",
 ): VisualTruncateResult {
-	if (!text) {
+	if (!text || text.trim() === "") {
 		return { visualLines: [], skippedCount: 0 };
 	}
 
-	// Create a temporary Text component to render and get visual lines
-	const tempText = new Text(text, paddingX, 0);
-	const allVisualLines = tempText.render(width);
-
-	if (allVisualLines.length <= maxVisualLines) {
-		return { visualLines: allVisualLines, skippedCount: 0 };
+	// Match Text's tab and narrow-terminal padding rules, but only pad retained lines.
+	const padding = Math.min(paddingX, Math.max(0, Math.floor((width - 1) / 2)));
+	const contentWidth = Math.max(1, width - padding * 2);
+	const retained: string[] = [];
+	let total = 0;
+	for (const line of wrapTextWithAnsiLines(text.replace(/\t/g, "   "), contentWidth)) {
+		if (retained.length < maxVisualLines) {
+			retained.push(line);
+		} else if (keep === "end" && maxVisualLines > 0) {
+			retained[total % maxVisualLines] = line;
+		}
+		total++;
 	}
 
-	const truncatedLines =
-		keep === "start" ? allVisualLines.slice(0, maxVisualLines) : allVisualLines.slice(-maxVisualLines);
-	const skippedCount = allVisualLines.length - maxVisualLines;
-
-	return { visualLines: truncatedLines, skippedCount };
+	// A ring buffer keeps tail previews bounded, even for very long logical lines.
+	const start = keep === "end" && total > maxVisualLines && maxVisualLines > 0 ? total % maxVisualLines : 0;
+	const ordered = start === 0 ? retained : [...retained.slice(start), ...retained.slice(0, start)];
+	const margin = " ".repeat(padding);
+	const visualLines = ordered.map((line) => {
+		const padded = margin + line + margin;
+		const result = padded + " ".repeat(Math.max(0, width - visibleWidth(padded)));
+		// Flatten only the kept strings, as Text does for its cached output.
+		Number(result);
+		return result;
+	});
+	return { visualLines, skippedCount: Math.max(0, total - maxVisualLines) };
 }
 
 export interface VisualLinePreviewOptions {

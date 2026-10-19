@@ -898,41 +898,25 @@ export function flattenLines(lines: readonly string[]): void {
 }
 
 export function wrapTextWithAnsi(text: string, width: number): string[] {
-	if (!text) {
-		return [""];
-	}
-
-	// Handle newlines by processing each line separately
-	// Track ANSI state across lines so styles carry over after literal newlines
-	const inputLines = text.split(/\r\n|\r|\n/);
-	const result: string[] = [];
-	const tracker = new AnsiCodeTracker();
-
-	for (const inputLine of inputLines) {
-		// Prepend active ANSI codes from previous lines (except for first line)
-		const prefix = result.length > 0 ? tracker.getActiveCodes() : "";
-		const wrappedLines = wrapSingleLine(prefix + inputLine, width);
-		for (const wrappedLine of wrappedLines) {
-			result.push(wrappedLine);
-		}
-		// Update tracker with codes from this line for next iteration
-		updateTrackerFromText(inputLine, tracker);
-	}
-
-	return result.length > 0 ? result : [""];
+	return Array.from(wrapTextWithAnsiLines(text, width));
 }
 
-function wrapSingleLine(line: string, width: number): string[] {
-	if (!line) {
-		return [""];
+/** Yield wrapped lines without retaining the complete output, preserving ANSI state across newlines. */
+export function* wrapTextWithAnsiLines(text: string, width: number): Generator<string> {
+	const tracker = new AnsiCodeTracker();
+	for (const inputLine of text.split(/\r\n|\r|\n/)) {
+		yield* wrapSingleLine(tracker.getActiveCodes() + inputLine, width);
+		updateTrackerFromText(inputLine, tracker);
+	}
+}
+
+function* wrapSingleLine(line: string, width: number): Generator<string> {
+	if (!line || visibleWidth(line) <= width) {
+		yield line;
+		return;
 	}
 
-	const visibleLength = visibleWidth(line);
-	if (visibleLength <= width) {
-		return [line];
-	}
-
-	const wrapped: string[] = [];
+	let emitted = false;
 	const tracker = new AnsiCodeTracker();
 	const tokens = splitIntoTokensWithAnsi(line);
 
@@ -951,17 +935,22 @@ function wrapSingleLine(line: string, width: number): string[] {
 				if (lineEndReset) {
 					currentLine += lineEndReset;
 				}
-				wrapped.push(currentLine);
+				yield currentLine.trimEnd();
+				emitted = true;
 				currentLine = "";
 				currentVisibleLength = 0;
 			}
 
 			// Break long token - breakLongWord handles its own resets
-			const broken = breakLongWord(token, width, tracker);
-			for (let i = 0; i < broken.length - 1; i++) {
-				wrapped.push(broken[i]!);
+			let lastLine: string | undefined;
+			for (const brokenLine of breakLongWord(token, width, tracker)) {
+				if (lastLine !== undefined) {
+					yield lastLine.trimEnd();
+					emitted = true;
+				}
+				lastLine = brokenLine;
 			}
-			currentLine = broken[broken.length - 1];
+			currentLine = lastLine ?? "";
 			currentVisibleLength = visibleWidth(currentLine);
 			continue;
 		}
@@ -976,7 +965,8 @@ function wrapSingleLine(line: string, width: number): string[] {
 			if (lineEndReset) {
 				lineToWrap += lineEndReset;
 			}
-			wrapped.push(lineToWrap);
+			yield lineToWrap.trimEnd();
+			emitted = true;
 			if (isWhitespace) {
 				// Don't start new line with whitespace
 				currentLine = tracker.getActiveCodes();
@@ -994,13 +984,10 @@ function wrapSingleLine(line: string, width: number): string[] {
 		updateTrackerFromText(token, tracker);
 	}
 
-	if (currentLine) {
-		// No reset at end of final line - let caller handle it
-		wrapped.push(currentLine);
+	if (currentLine || !emitted) {
+		// Trailing whitespace can exceed the width; leave final-line ANSI state to the caller.
+		yield currentLine.trimEnd();
 	}
-
-	// Trailing whitespace can cause lines to exceed the requested width
-	return wrapped.length > 0 ? wrapped.map((line) => line.trimEnd()) : [""];
 }
 
 export const PUNCTUATION_REGEX = /[(){}[\]<>.,;:'"!?+\-=*/\\|&%^$#@~`]/;
@@ -1019,73 +1006,38 @@ export function isPunctuationChar(char: string): boolean {
 	return PUNCTUATION_REGEX.test(char);
 }
 
-function breakLongWord(word: string, width: number, tracker: AnsiCodeTracker): string[] {
-	const lines: string[] = [];
+function* breakLongWord(word: string, width: number, tracker: AnsiCodeTracker): Generator<string> {
 	let currentLine = tracker.getActiveCodes();
 	let currentWidth = 0;
 
-	// First, separate ANSI codes from visible content
-	// We need to handle ANSI codes specially since they're not graphemes
 	let i = 0;
-	const segments: Array<{ type: "ansi" | "grapheme"; value: string }> = [];
-
 	while (i < word.length) {
-		const ansiResult = extractAnsiCode(word, i);
-		if (ansiResult) {
-			segments.push({ type: "ansi", value: ansiResult.code });
-			i += ansiResult.length;
-		} else {
-			// Find the next ANSI code or end of string
-			let end = i;
-			while (end < word.length) {
-				const nextAnsi = extractAnsiCode(word, end);
-				if (nextAnsi) break;
-				end++;
-			}
-			// Segment this non-ANSI portion into graphemes
-			const textPortion = word.slice(i, end);
-			for (const seg of graphemeSegmenter.segment(textPortion)) {
-				segments.push({ type: "grapheme", value: seg.segment });
-			}
-			i = end;
-		}
-	}
-
-	// Now process segments
-	for (const seg of segments) {
-		if (seg.type === "ansi") {
-			currentLine += seg.value;
-			tracker.process(seg.value);
+		const ansi = extractAnsiCode(word, i);
+		if (ansi) {
+			currentLine += ansi.code;
+			tracker.process(ansi.code);
+			i += ansi.length;
 			continue;
 		}
 
-		const grapheme = seg.value;
-		// Skip empty graphemes to avoid issues with string-width calculation
-		if (!grapheme) continue;
-
-		const graphemeWidth = visibleWidth(grapheme);
-
-		if (currentWidth + graphemeWidth > width) {
-			// Add specific reset for underline only (preserves background)
-			const lineEndReset = tracker.getLineEndReset();
-			if (lineEndReset) {
-				currentLine += lineEndReset;
+		let end = i;
+		while (end < word.length && !extractAnsiCode(word, end)) end++;
+		for (const { segment } of graphemeSegmenter.segment(word.slice(i, end))) {
+			const segmentWidth = visibleWidth(segment);
+			if (currentWidth + segmentWidth > width) {
+				currentLine += tracker.getLineEndReset();
+				yield currentLine;
+				currentLine = tracker.getActiveCodes();
+				currentWidth = 0;
 			}
-			lines.push(currentLine);
-			currentLine = tracker.getActiveCodes();
-			currentWidth = 0;
+			currentLine += segment;
+			currentWidth += segmentWidth;
 		}
-
-		currentLine += grapheme;
-		currentWidth += graphemeWidth;
+		i = end;
 	}
 
-	if (currentLine) {
-		// No reset at end of final segment - caller handles continuation
-		lines.push(currentLine);
-	}
-
-	return lines.length > 0 ? lines : [""];
+	// No reset at end of final segment - caller handles continuation.
+	yield currentLine;
 }
 
 /**

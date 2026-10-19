@@ -779,7 +779,7 @@ interface Terminal {
 ## Utilities
 
 ```typescript
-import { visibleWidth, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { visibleWidth, truncateToWidth, wrapTextWithAnsi, wrapTextWithAnsiLines } from "@earendil-works/pi-tui";
 
 // Get visible width of string (ignoring ANSI codes)
 const width = visibleWidth("\x1b[31mHello\x1b[0m"); // 5
@@ -793,6 +793,11 @@ const truncatedNoEllipsis = truncateToWidth("Hello World", 8, ""); // "Hello Wo"
 // Wrap text to width (preserving ANSI codes across line breaks)
 const lines = wrapTextWithAnsi("This is a long line that needs wrapping", 20);
 // ["This is a long line", "that needs wrapping"]
+
+// Consume wrapped lines incrementally without retaining the full result array
+for (const line of wrapTextWithAnsiLines("This is a long line that needs wrapping", 20)) {
+  // Keep, count, or discard each line. ANSI styles and hyperlinks carry across line breaks.
+}
 ```
 
 ## Creating Custom Components
