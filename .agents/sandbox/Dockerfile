@@ -7,14 +7,12 @@ RUN uv venv /opt/test-venv \
     && uv pip install --python /opt/test-venv/bin/python \
        pytest==9.1.1 \
        pytest-xdist==3.8.0 \
-       pytest-sugar==1.1.1 \
-       pytest-instafail==0.5.0
+       pytest-sugar==1.1.1
 ENV PATH="/opt/test-venv/bin:$PATH"
 
 RUN uv --version \
     && uvx --version \
     && pytest --help > /tmp/pytest-help \
-    && grep -q -e --instafail /tmp/pytest-help \
     && grep -q -e --numprocesses /tmp/pytest-help \
     && grep -q -e --force-sugar /tmp/pytest-help \
     && rm /tmp/pytest-help
