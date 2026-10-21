@@ -383,6 +383,7 @@ const box = new Box(
 );
 box.addChild(new Text("Content"));
 box.setBgFn((text) => chalk.bgBlue(text));  // Change background dynamically
+box.setPaddingY(0); // Update vertical padding without replacing children
 ```
 
 ### Text
@@ -398,6 +399,7 @@ const text = new Text(
 );
 text.setText("Updated text");
 text.setCustomBgFn((text) => chalk.bgBlue(text));
+text.setPaddingY(0); // Update vertical padding and invalidate cached lines
 ```
 
 ### TruncatedText

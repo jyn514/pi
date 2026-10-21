@@ -41,6 +41,11 @@ export class Text implements Component {
 		this.invalidate();
 	}
 
+	setPaddingY(paddingY: number): void {
+		this.paddingY = paddingY;
+		this.invalidate();
+	}
+
 	invalidate(): void {
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;
