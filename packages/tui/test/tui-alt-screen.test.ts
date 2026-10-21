@@ -3,6 +3,8 @@ import { describe, it } from "node:test";
 import {
 	AltScreenSearchComponent,
 	AltScreenSearchIndex,
+	type AltScreenSearchSource,
+	type AltScreenSearchSourceUnit,
 	findAltScreenSearchMatches,
 } from "../src/alt-screen-search.ts";
 import { HStack } from "../src/components/h-stack.ts";
@@ -20,7 +22,7 @@ import {
 	resetCapabilitiesCache,
 	setCapabilities,
 } from "../src/terminal-image.ts";
-import { renderFakeCursor, type TuiMouseEvent } from "../src/tui.ts";
+import { Container, renderFakeCursor, type TuiMouseEvent } from "../src/tui.ts";
 import { TuiAltScreen } from "../src/tui-alt-screen.ts";
 import { stripTerminalSequences, visibleWidth } from "../src/utils.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
@@ -2096,5 +2098,424 @@ describe("TuiAltScreen", () => {
 		assert.ok(tui.viewportTop < topBefore);
 		assert.ok(terminal.getViewport().some((line) => line.includes("↑ ↓")));
 		tui.stop();
+	});
+});
+
+describe("source-backed transcript search", () => {
+	it("captures lazily, keeps an exclusive fixed snapshot, and releases focus and source state on replacement or stop", async () => {
+		const terminal = new RecordingTerminal(80, 10);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			searchCurrentMatchStyle: (text) => `BODY-HIGHLIGHT${text}`,
+		});
+		const document = new Container();
+		let rendering = false;
+		document.addChild({
+			render: () => {
+				rendering = true;
+				try {
+					return ["render-only needle", ...Array.from({ length: 20 }, () => "closed heading")];
+				} finally {
+					rendering = false;
+				}
+			},
+			invalidate: () => {},
+		});
+		const scroll = new ScrollView(document, { primary: true });
+		let snapshots = 0;
+		let anchors = 0;
+		let units: readonly AltScreenSearchSourceUnit[] = [{ id: "one", fragments: ["needle first needle\x07\x1b[2J"] }];
+		const source: AltScreenSearchSource = {
+			snapshot: () => {
+				assert.equal(rendering, false);
+				snapshots++;
+				return units;
+			},
+			getAnchorRow: () => {
+				assert.equal(rendering, false);
+				anchors++;
+				return 15;
+			},
+		};
+		scroll.searchSource = source;
+		const editor = new InputOverlay();
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: scroll, grow: 1, basis: 0 },
+				{ component: editor, basis: 1 },
+			]),
+		);
+		tui.setFocus(editor);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[102;6u");
+			await terminal.waitForRender();
+			tui.requestRender();
+			await terminal.waitForRender();
+			assert.equal(snapshots, 0);
+			assert.equal(anchors, 0);
+			assert.equal(editor.focused, false);
+			terminal.sendInput("   ");
+			await terminal.waitForRender();
+			assert.equal(snapshots, 0);
+			terminal.sendInput("needle");
+			await terminal.waitForRender();
+			assert.equal(snapshots, 1);
+			assert.ok(terminal.getViewport().some((line) => line.includes("1/2")));
+			assert.ok(!terminal.events.some((event) => event.type === "write" && event.data.includes("BODY-HIGHLIGHT")));
+			assert.ok(!tui.getScreenLines().some((line) => line.includes("\x07\x1b[2J")));
+
+			units = [...units, { id: "two", fragments: ["needle new completion"] }];
+			tui.requestRender();
+			await terminal.waitForRender();
+			terminal.sendInput("\r");
+			await terminal.waitForRender();
+			assert.ok(terminal.getViewport().some((line) => line.includes("2/2")));
+			// Render-only text is excluded even when the original source has no match.
+			terminal.sendInput("\x15");
+			terminal.sendInput("render-only");
+			await terminal.waitForRender();
+			assert.ok(terminal.getViewport().some((line) => line.includes("No matches")));
+			// A changed query and clearing/retyping the same query still use the captured source.
+			terminal.sendInput("\x15");
+			terminal.sendInput("first");
+			await terminal.waitForRender();
+			assert.ok(terminal.getViewport().some((line) => line.includes("1/1")));
+			terminal.sendInput("\x15");
+			await terminal.waitForRender();
+			terminal.sendInput("first");
+			await terminal.waitForRender();
+			assert.ok(terminal.getViewport().some((line) => line.includes("1/1")));
+			assert.equal(snapshots, 1);
+			tui.closeSearch();
+			assert.equal(editor.focused, true);
+			terminal.sendInput("x");
+			assert.deepEqual(editor.inputs, ["x"]);
+			terminal.sendInput("\x1b[102;6u");
+			terminal.sendInput("needle");
+			await terminal.waitForRender();
+			assert.equal(snapshots, 2);
+			assert.ok(terminal.getViewport().some((line) => line.includes("1/3")));
+
+			// Replacing only the provider on an unchanged root must not retain old matches.
+			scroll.searchSource = { snapshot: () => [], getAnchorRow: () => undefined };
+			tui.requestRender();
+			await terminal.waitForRender();
+			assert.equal(tui.hasOverlay(), false);
+			assert.equal(editor.focused, true);
+			scroll.searchSource = source;
+			terminal.sendInput("\x1b[102;6u");
+			terminal.sendInput("needle");
+			await terminal.waitForRender();
+			assert.equal(snapshots, 3);
+			tui.stop({ preserveScreen: true });
+			assert.equal(tui.hasOverlay(), false);
+			assert.equal(editor.focused, true);
+			tui.start();
+			await terminal.waitForRender();
+			assert.equal(tui.hasOverlay(), false);
+			terminal.sendInput("\x1b[102;6u");
+			await terminal.waitForRender();
+			assert.equal(snapshots, 3);
+			terminal.sendInput("needle");
+			await terminal.waitForRender();
+			assert.equal(snapshots, 4);
+		} finally {
+			tui.stop({ preserveScreen: true });
+		}
+	});
+
+	it("uses same-frame nested measurements at content width, retaining occurrences as anchors move or disappear", async () => {
+		const terminal = new VirtualTerminal(80, 9);
+		const tui = new TuiAltScreen(terminal);
+		const document = new Container();
+		const resources = new Text("resources\nnotice\nspacer", 0, 0);
+		const chat = new Container();
+		const preceding = new Text(Array.from({ length: 12 }, () => "earlier").join("\n"), 0, 0);
+		const history = new Container();
+		const heading = new Text("target heading", 0, 0);
+		history.addChild(heading);
+		chat.addChild(preceding);
+		chat.addChild(history);
+		chat.addChild(new Text(Array.from({ length: 20 }, () => "later").join("\n"), 0, 0));
+		document.addChild(resources);
+		document.addChild(chat);
+		const scroll = new ScrollView(document, { primary: true, scrollbar: "always" });
+		let available = true;
+		let snapshots = 0;
+		const widths: number[] = [];
+		scroll.searchSource = {
+			snapshot: () => {
+				snapshots++;
+				return [{ id: "target", fragments: ["needle first", "needle second"] }];
+			},
+			getAnchorRow: (id, width) => {
+				assert.equal(id, "target");
+				widths.push(width);
+				if (!available) return undefined;
+				const rows = [
+					document.getChildRow(chat, width),
+					chat.getChildRow(history, width),
+					history.getChildRow(heading, width),
+				];
+				assert.ok(rows.every((row) => row !== undefined));
+				return rows.reduce<number>((sum, row) => sum + row!, 0);
+			},
+		};
+		tui.setLayoutRoot(scroll);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[102;6u");
+			terminal.sendInput("needle");
+			await terminal.waitForRender();
+			assert.equal(scroll.scrollTop, 12); // 3 resource rows + 12 earlier rows - 3 rows of context.
+			assert.ok(widths.every((width) => width === terminal.columns - 1));
+			assert.ok(terminal.getViewport().some((line) => line.includes("1/2")));
+			terminal.sendInput("\r");
+			await terminal.waitForRender();
+			assert.ok(terminal.getViewport().some((line) => line.includes("2/2")));
+			assert.ok(terminal.getViewport().some((line) => line.includes("needle second")));
+
+			preceding.setText(Array.from({ length: 24 }, () => "expanded").join("\n"));
+			tui.requestRender();
+			await terminal.waitForRender();
+			assert.equal(scroll.scrollTop, 24);
+			assert.ok(terminal.getViewport().some((line) => line.includes("2/2")));
+			assert.ok(terminal.getViewport().some((line) => line.includes("target heading")));
+			available = false;
+			tui.scrollToTop();
+			terminal.sendInput("\r");
+			await terminal.waitForRender();
+			assert.equal(scroll.scrollTop, 0); // Undefined anchor never falls back to the previous target.
+			assert.ok(terminal.getViewport().some((line) => line.includes("1/2")));
+			available = true;
+			resources.setText("r".repeat(90)); // Reflows to four rows at the new content width.
+			widths.length = 0;
+			terminal.resize(28, 9);
+			await terminal.waitForRender();
+			assert.ok(widths.length > 0 && widths.every((width) => width === terminal.columns - 1));
+			assert.equal(scroll.scrollTop, 25);
+			assert.ok(terminal.getViewport().every((line) => visibleWidth(line) <= 28));
+			// The excerpt adds a row: clicking the actual bottom-row arrow still navigates.
+			let viewport = terminal.getViewport();
+			const row = viewport.findIndex((line) => line.includes("↑") && line.includes("↓"));
+			const column = viewport[row]!.indexOf("↓");
+			assert.ok(row >= 0 && column >= 0);
+			terminal.sendInput(`\x1b[<35;${column + 1};${row + 1}M`);
+			terminal.sendInput(`\x1b[<0;${column + 1};${row + 1}M`);
+			await terminal.waitForRender();
+			viewport = terminal.getViewport();
+			assert.ok(viewport.some((line) => line.includes("2/2")));
+			terminal.sendInput("\x1b[13;2u");
+			await terminal.waitForRender();
+			assert.ok(terminal.getViewport().some((line) => line.includes("1/2")));
+			assert.equal(snapshots, 1);
+		} finally {
+			tui.stop({ preserveScreen: true });
+		}
+	});
+
+	it("reads child starts only from an existing same-width render without changing mouse hit testing", () => {
+		const container = new Container();
+		let renders = 0;
+		const clicks: number[] = [];
+		const first = {
+			render: () => {
+				renders++;
+				return ["a", "b"];
+			},
+			invalidate: () => {},
+		};
+		const second = {
+			render: () => {
+				renders++;
+				return ["c"];
+			},
+			invalidate: () => {},
+			handleMouse: (event: TuiMouseEvent) => {
+				clicks.push(event.y);
+				return { handled: true };
+			},
+		};
+		container.addChild(first);
+		container.addChild(second);
+		assert.equal(container.getChildRow(second, 20), undefined);
+		assert.equal(renders, 0);
+		container.render(20);
+		assert.equal(container.getChildRow(first, 20), 0);
+		assert.equal(container.getChildRow(second, 20), 2);
+		assert.equal(container.getChildRow(second, 19), undefined);
+		container.handleMouse({
+			type: "click",
+			button: "left",
+			x: 0,
+			y: 2,
+			screenX: 0,
+			screenY: 2,
+			width: 20,
+			height: 3,
+			shift: false,
+			alt: false,
+			ctrl: false,
+		});
+		assert.deepEqual(clicks, [0]);
+		assert.equal(renders, 2);
+		container.removeChild(second);
+		assert.equal(container.getChildRow(second, 20), undefined);
+		assert.equal(renders, 2);
+		container.render(30);
+		assert.equal(container.getChildRow(first, 20), undefined);
+		assert.equal(container.getChildRow(first, 30), 0);
+	});
+});
+
+describe("source search frame and overlay ownership", () => {
+	it("reveals offscreen source matches using one document render per query or reflow", async () => {
+		const terminal = new VirtualTerminal(80, 12);
+		const tui = new TuiAltScreen(terminal);
+		let renders = 0;
+		class Transcript extends Container {
+			override render(width: number): string[] {
+				renders++;
+				return super.render(width);
+			}
+		}
+		const document = new Transcript();
+		const before = new Text("x".repeat(1500), 0, 0);
+		const first = new Text("first heading", 0, 0);
+		const between = new Text(Array.from({ length: 30 }, () => "between").join("\n"), 0, 0);
+		const second = new Text("second heading", 0, 0);
+		document.addChild(before);
+		document.addChild(first);
+		document.addChild(between);
+		document.addChild(second);
+		document.addChild(new Text(Array.from({ length: 30 }, () => "after").join("\n"), 0, 0));
+		const scroll = new ScrollView(document, { primary: true, scrollbar: "always" });
+		const headings = new Map([
+			["first", first],
+			["second", second],
+		]);
+		let snapshots = 0;
+		scroll.searchSource = {
+			snapshot: () => {
+				snapshots++;
+				return [...headings.keys()].map((id) => ({ id, fragments: [`${id}needle`] }));
+			},
+			getAnchorRow: (id, width) => document.getChildRow(headings.get(id)!, width),
+		};
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: new Text("header", 0, 0), basis: 1 },
+				{ component: scroll, grow: 1, basis: 0 },
+				{ component: new Text("footer", 0, 0), basis: 1 },
+			]),
+		);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[102;6u");
+			await terminal.waitForRender();
+			const assertRevealed = (id: string): void => {
+				const anchor = document.getChildRow(headings.get(id)!, scroll.getContentWidth(terminal.columns))!;
+				const screenRow = 1 + anchor - scroll.scrollTop;
+				assert.ok(screenRow >= 1 && screenRow < terminal.rows - 1);
+				assert.ok(terminal.getViewport()[screenRow]!.startsWith(`${id} heading`));
+				assert.equal(terminal.getViewport()[0]!.trimEnd(), "header");
+				assert.equal(terminal.getViewport().at(-1)!.trimEnd(), "footer");
+				assert.equal(renders, 1, "search reveal must reuse the measured document, without a queued extra frame");
+			};
+			for (const id of ["first", "second"]) {
+				renders = 0;
+				terminal.sendInput("\x15");
+				terminal.sendInput(`${id}needle`);
+				await terminal.waitForRender();
+				assertRevealed(id);
+			}
+			terminal.sendInput("\x15");
+			terminal.sendInput("needle");
+			await terminal.waitForRender();
+			for (const id of ["first", "second"]) {
+				renders = 0;
+				terminal.sendInput("\r"); // Wrap to the first occurrence, then navigate back to the second.
+				await terminal.waitForRender();
+				assertRevealed(id);
+			}
+			renders = 0;
+			terminal.resize(60, 10); // Reflows the prefix, moving the selected anchor below the old viewport.
+			await terminal.waitForRender();
+			assertRevealed("second");
+			assert.equal(snapshots, 1);
+		} finally {
+			tui.stop({ preserveScreen: true });
+		}
+	});
+
+	it("releases source search only when its overlay is removed through generic dismissal", async () => {
+		const terminal = new VirtualTerminal(80, 12);
+		const tui = new TuiAltScreen(terminal);
+		const editor = new InputOverlay();
+		const scroll = new ScrollView(new Text("heading", 0, 0), { primary: true });
+		let snapshots = 0;
+		let anchors = 0;
+		scroll.searchSource = {
+			snapshot: () => [{ id: "unit", fragments: [`needle completion ${++snapshots}`] }],
+			getAnchorRow: () => {
+				anchors++;
+				return 0;
+			},
+		};
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: scroll, grow: 1, basis: 0 },
+				{ component: editor, basis: 1 },
+			]),
+		);
+		tui.setFocus(editor);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			const openSearch = async (): Promise<void> => {
+				terminal.sendInput("\x1b[102;6u");
+				terminal.sendInput("needle");
+				await terminal.waitForRender();
+				assert.equal(tui.hasOverlay(), true);
+				assert.ok(terminal.getViewport().some((line) => line.includes(`needle completion ${snapshots}`)));
+			};
+			await openSearch();
+			const other = new InputOverlay();
+			tui.showOverlay(other);
+			await terminal.waitForRender();
+			tui.hideOverlay(); // Remove another overlay, not the search beneath it.
+			await terminal.waitForRender();
+			assert.equal(tui.hasOverlay(), true);
+			assert.equal(other.focused, false);
+			assert.equal(editor.focused, false);
+			assert.equal(snapshots, 1);
+			assert.ok(terminal.getViewport().some((line) => line.includes("needle completion 1")));
+
+			const anchorsBeforeDismissal = anchors;
+			tui.hideOverlay();
+			await terminal.waitForRender();
+			assert.equal(tui.hasOverlay(), false);
+			assert.equal(editor.focused, true);
+			assert.equal(anchors, anchorsBeforeDismissal, "dismissed search must no longer resolve retained matches");
+			await openSearch(); // One shortcut must reopen with a fresh completed-source snapshot.
+			assert.equal(snapshots, 2);
+			tui.closeSearch();
+			await terminal.waitForRender();
+			assert.equal(editor.focused, true);
+			await openSearch();
+			assert.equal(snapshots, 3);
+			tui.stop({ preserveScreen: true });
+			assert.equal(tui.hasOverlay(), false);
+			assert.equal(editor.focused, true);
+			tui.start();
+			await terminal.waitForRender();
+			await openSearch();
+			assert.equal(snapshots, 4);
+		} finally {
+			tui.stop({ preserveScreen: true });
+		}
 	});
 });

@@ -1,3 +1,4 @@
+import type { AltScreenSearchSource } from "../alt-screen-search.ts";
 import { LAYOUT_NODE, type ScrollLayoutNode } from "../layout-node.ts";
 import { type Component, Container } from "../tui.ts";
 
@@ -20,6 +21,8 @@ export interface ScrollViewScrollToOptions {
 }
 
 export class ScrollView extends Container {
+	/** Optional complete source; when configured, search does not inspect rendered text. */
+	searchSource: AltScreenSearchSource | undefined;
 	private readonly child: Component;
 	readonly followEnd: boolean;
 	readonly primary: boolean;

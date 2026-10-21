@@ -380,6 +380,17 @@ export class Container implements Component {
 		}
 	}
 
+	/** Read a child's relative start from the last same-width render, without rendering. */
+	getChildRow(child: Component, width: number): number | undefined {
+		if (this.mouseLayout?.width !== width || !this.children.includes(child)) return undefined;
+		let row = 0;
+		for (const measured of this.mouseLayout.children) {
+			if (measured.component === child) return row;
+			row += measured.height;
+		}
+		return undefined;
+	}
+
 	handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
 		if (event.y < 0 || event.y >= event.height) return undefined;
 		const mouseChildren =
@@ -756,6 +767,7 @@ export abstract class TuiBase extends Container implements TUI {
 						this.setFocus(topVisible?.component ?? entry.preFocus);
 					}
 					if (this.overlayStack.length === 0) this.hideTerminalCursor();
+					this.onOverlayRemoved(component);
 					this.requestRender();
 				}
 			},
@@ -825,6 +837,9 @@ export abstract class TuiBase extends Container implements TUI {
 		};
 	}
 
+	/** Notify specialized renderers after an overlay is permanently removed and focus is restored. */
+	protected onOverlayRemoved(_component: Component): void {}
+
 	/** Hide the topmost overlay and restore previous focus. */
 	hideOverlay(): void {
 		const overlay = this.overlayStack[this.overlayStack.length - 1];
@@ -838,6 +853,7 @@ export abstract class TuiBase extends Container implements TUI {
 			this.setFocus(topVisible?.component ?? overlay.preFocus);
 		}
 		if (this.overlayStack.length === 0) this.hideTerminalCursor();
+		this.onOverlayRemoved(overlay.component);
 		this.requestRender();
 	}
 

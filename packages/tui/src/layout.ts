@@ -407,6 +407,17 @@ export function renderLayoutFrame(
 	};
 }
 
+/** Repaint a same-frame scroll change from measured lines, without rendering or laying out components again. */
+export function repaintScrollView(frame: LayoutFrame, scrollView: ScrollView, previousScrollTop: number): void {
+	const box = getScrollViewBox(frame, scrollView);
+	const child = box?.children[0];
+	if (!box || !child || previousScrollTop === scrollView.scrollTop) return;
+	translateBox(child, previousScrollTop - scrollView.scrollTop);
+	updateClips(child, box.clip);
+	frame.lines = Array.from({ length: frame.height }, () => "");
+	paintBox(frame.root, frame.lines, frame.width);
+}
+
 function containsPoint(rect: LayoutRect, x: number, y: number): boolean {
 	return x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
 }

@@ -163,6 +163,52 @@ Stack entries support `basis`, `grow`, `shrink`, `minSize`, `maxSize`, and respo
 
 Layout geometry is rebuilt for each requested frame. Stateful components are retained, and their existing rendered-line caches remain effective. Calling `render(width)` directly on these layout components produces an unbounded document, which is also used when alt mode restores the main screen.
 
+### Original-text transcript search
+
+By default, fullscreen search matches rendered rows and highlights matches in the document.
+For deferred or collapsed bodies, assign the primary `ScrollView.searchSource` instead:
+
+```typescript
+import type { AltScreenSearchSource, AltScreenSearchSourceUnit } from "@earendil-works/pi-tui";
+
+const source: AltScreenSearchSource = {
+  snapshot(): readonly AltScreenSearchSourceUnit[] {
+    return [{ id: "message-1", fragments: ["Original message text", "Another independent fragment"] }];
+  },
+  getAnchorRow(id, contentWidth) {
+    const child = messageComponents.get(id);
+    return child ? transcript.getChildRow(child, contentWidth) : undefined;
+  },
+};
+scrollView.searchSource = source;
+```
+
+The source is complete and exclusive: rendered text is not searched or merged into its results.
+Return units in document order with unique, stable IDs and immutable fragment arrays containing the original searchable text.
+Fragments are matched independently with literal, case-insensitive Unicode matching and whitespace-insensitive query spacing.
+Each occurrence counts separately, including several occurrences in one unit.
+Source matches navigate to their unit start and show a bounded, terminal-safe excerpt rather than body highlights.
+Searching does not construct or render hidden bodies.
+
+`snapshot()` runs synchronously on the first normalized nonempty query, never for blank search or from `Component.render()`.
+The returned snapshot is retained unchanged across queries and live document updates until search closes.
+Reopening search captures a new snapshot; the application decides which completed content belongs in it.
+Only the selected excerpt is built, and no rendered-cell mapping is created for original text.
+
+After layout, `getAnchorRow()` receives the actual scroll content width, excluding an always-visible scrollbar.
+Return the current zero-based row relative to the scroll content, or `undefined` when that unit has no current anchor.
+Read existing measurements in this callback; do not render components or construct bodies to find their rows.
+An undefined anchor retains the occurrence and count but does not scroll to a stale location.
+Resize and body expansion can move anchors without changing the selected occurrence or snapshot.
+`Container.getChildRow(child, width)` reads child starts from its existing same-width render without rendering again.
+It returns `undefined` before a matching render, at a different width, or for an absent child.
+For nested containers, add their measured relative child starts; do not infer rows from message indices.
+
+Call the concrete `TuiAltScreen.closeSearch()` before rebuilding the document, replacing source bindings, or changing views.
+It releases the snapshot, matches, and excerpt and restores previous focus.
+Replacing the source provider identity on the same root or stopping the renderer also closes search.
+This capability does not change ordinary `TUI` or `ViewportTUI` interfaces or `Component.render()`.
+
 ### Overlays
 
 Overlays render components on top of existing content without replacing it. Useful for dialogs, menus, and modal UI.
