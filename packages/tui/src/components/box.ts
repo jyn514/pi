@@ -55,6 +55,11 @@ export class Box implements Component {
 		this.invalidateCache();
 	}
 
+	setPaddingY(paddingY: number): void {
+		this.paddingY = paddingY;
+		this.invalidateCache();
+	}
+
 	private invalidateCache(): void {
 		this.cache = undefined;
 	}
