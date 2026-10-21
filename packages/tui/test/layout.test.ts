@@ -4,7 +4,7 @@ import { HStack } from "../src/components/h-stack.ts";
 import { ScrollView } from "../src/components/scroll-view.ts";
 import { Text } from "../src/components/text.ts";
 import { VStack } from "../src/components/v-stack.ts";
-import { renderLayoutFrame } from "../src/layout.ts";
+import { type LayoutBox, renderLayoutFrame, repaintScrollView } from "../src/layout.ts";
 import { encodeKitty, registerKittyImageMetadata } from "../src/terminal-image.ts";
 import { stripTerminalSequences } from "../src/utils.ts";
 
@@ -352,6 +352,61 @@ describe("viewport layout", () => {
 		assert.strictEqual(inner.viewportHeight, 2);
 		assert.strictEqual(outer.scrollBy(10), 9);
 		assert.strictEqual(outer.scrollTop, 1);
+	});
+
+	it("repaints measured scroll subtrees like fresh layout, including nested clips and scrollbar geometry", () => {
+		let renders = 0;
+		const content = new Text(Array.from({ length: 24 }, (_, index) => `row ${index} 界`).join("\n"), 0, 0);
+		const inner = new ScrollView(content, { scrollbar: "always" });
+		const body = new VStack([
+			{
+				component: {
+					render: (width: number) => {
+						renders++;
+						return content.render(width);
+					},
+					invalidate: () => {},
+				},
+				basis: "auto",
+			},
+			{ component: inner, basis: 3 },
+			new Text("tail", 0, 0),
+		]);
+		const scroll = new ScrollView(body, { scrollbar: "always" });
+		const root = new HStack([
+			{ component: new Text("side", 0, 0), basis: 5 },
+			{
+				component: new VStack([
+					{ component: new Text("header", 0, 0), basis: 1 },
+					{ component: scroll, basis: 0, grow: 1 },
+					{ component: new Text("footer", 0, 0), basis: 1 },
+				]),
+				basis: 0,
+				grow: 1,
+			},
+		]);
+		const geometry = (box: LayoutBox): unknown => ({
+			rect: box.rect,
+			clip: box.clip,
+			children: box.children.map(geometry),
+		});
+		for (const [width, height] of [
+			[30, 9],
+			[18, 6],
+		] as const) {
+			let frame = renderLayoutFrame(root, width, height, () => {});
+			for (const target of [12, 25, 0, 1_000, 0]) {
+				const previousScrollTop = scroll.scrollTop;
+				const before = renders;
+				scroll.scrollTo(target, { disableFollow: true });
+				repaintScrollView(frame, scroll, previousScrollTop);
+				assert.equal(renders, before, "repainting must not render any component");
+				const fresh = renderLayoutFrame(root, width, height, () => {});
+				assert.deepStrictEqual(frame.lines, fresh.lines);
+				assert.deepStrictEqual(geometry(frame.root), geometry(fresh.root));
+				frame = fresh;
+			}
+		}
 	});
 
 	it("rebuilds geometry after content changes", () => {

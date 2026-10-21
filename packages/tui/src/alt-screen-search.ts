@@ -29,6 +29,60 @@ export interface AltScreenSearchMatch {
 	segments: AltScreenSearchSegment[];
 }
 
+/** One stable application unit; fragments are searched independently in their original text. */
+export interface AltScreenSearchSourceUnit {
+	id: string;
+	fragments: readonly string[];
+}
+
+/** Complete, exclusive source for the primary scroll view's transcript search. */
+export interface AltScreenSearchSource {
+	snapshot(): readonly AltScreenSearchSourceUnit[];
+	getAnchorRow(id: string, contentWidth: number): number | undefined;
+}
+
+export interface AltScreenSourceMatch {
+	unitId: string;
+	fragmentIndex: number;
+	start: number;
+	end: number;
+}
+
+/** Match raw fragments without allocating rendered-cell mappings or joining fragment boundaries. */
+export function findAltScreenSourceMatches(
+	units: readonly AltScreenSearchSourceUnit[],
+	query: string,
+): AltScreenSourceMatch[] {
+	const normalized = normalizeQuery(query);
+	if (!normalized) return [];
+	const expression = new RegExp(normalized.split(" ").map(escapeRegExp).join("\\s+"), "giu");
+	const matches: AltScreenSourceMatch[] = [];
+	for (const unit of units) {
+		for (let fragmentIndex = 0; fragmentIndex < unit.fragments.length; fragmentIndex++) {
+			for (const match of unit.fragments[fragmentIndex]!.matchAll(expression)) {
+				matches.push({ unitId: unit.id, fragmentIndex, start: match.index, end: match.index + match[0].length });
+			}
+		}
+	}
+	return matches;
+}
+
+/** Build only a bounded window around the selected occurrence; never emit source terminal controls. */
+export function getAltScreenSourceExcerpt(fragment: string, match: AltScreenSourceMatch): string {
+	// Start at the occurrence so narrow panels do not clip away the match behind its context.
+	let start = match.start;
+	let end = Math.min(fragment.length, match.start + 160);
+	// Do not split surrogate pairs at the window boundaries.
+	if (start > 0 && /[\uDC00-\uDFFF]/u.test(fragment[start]!)) start -= 1;
+	if (end < fragment.length && /[\uDC00-\uDFFF]/u.test(fragment[end]!)) end += 1;
+	const text = fragment
+		.slice(start, end)
+		.replace(/[\x00-\x1f\x7f-\x9f]/gu, " ")
+		.replace(/\s+/gu, " ")
+		.trim();
+	return `${start > 0 ? "…" : ""}${text}${end < fragment.length ? "…" : ""}`;
+}
+
 const PRINTABLE_ASCII = /^[\x20-\x7e]*$/;
 
 function buildSearchCorpus(lines: readonly string[]): SearchCorpus {
@@ -105,7 +159,7 @@ function buildSearchCorpus(lines: readonly string[]): SearchCorpus {
 	return { text: chunks.join(""), spans };
 }
 
-function normalizeQuery(query: string): string {
+export function normalizeQuery(query: string): string {
 	return query.replace(/\s+/gu, " ").trim();
 }
 
@@ -188,7 +242,8 @@ export function findAltScreenSearchMatches(lines: readonly string[], query: stri
 	return normalizedQuery ? findSearchCorpusMatches(buildSearchCorpus(lines), normalizedQuery) : [];
 }
 
-export function getAltScreenSearchMatchKey(match: AltScreenSearchMatch): string {
+export function getAltScreenSearchMatchKey(match: AltScreenSearchMatch | AltScreenSourceMatch): string {
+	if ("unitId" in match) return JSON.stringify([match.unitId, match.fragmentIndex, match.start, match.end]);
 	const first = match.segments[0];
 	const last = match.segments[match.segments.length - 1];
 	return first && last ? `${first.row}:${first.startCol}:${last.row}:${last.endCol}` : "";
@@ -210,6 +265,8 @@ export class AltScreenSearchComponent implements Component, Focusable {
 	private nextButtonEnd = -1;
 	private hoveredNavigationDirection: -1 | 1 | undefined;
 	private _focused = false;
+	private excerpt: string | undefined;
+	private navigationRow = 2;
 
 	constructor(
 		onQueryChange: (query: string) => void,
@@ -233,8 +290,12 @@ export class AltScreenSearchComponent implements Component, Focusable {
 		this.resultCount = count;
 	}
 
+	setExcerpt(excerpt: string | undefined): void {
+		this.excerpt = excerpt;
+	}
+
 	getNavigationDirectionAt(row: number, column: number): -1 | 1 | undefined {
-		if (row !== 2) return undefined;
+		if (row !== this.navigationRow) return undefined;
 		if (column >= this.previousButtonStart && column < this.previousButtonEnd) return -1;
 		if (column >= this.nextButtonStart && column < this.nextButtonEnd) return 1;
 		return undefined;
@@ -317,10 +378,15 @@ export class AltScreenSearchComponent implements Component, Focusable {
 		this.nextButtonStart = showButtons ? this.previousButtonEnd + visibleWidth(separator) : -1;
 		this.nextButtonEnd = showButtons ? this.nextButtonStart + visibleWidth(nextButton) : -1;
 
-		if (safeWidth === 1) return ["┌", "│", "└"];
+		this.navigationRow = this.excerpt === undefined ? 2 : 3;
+		if (safeWidth === 1) return this.excerpt === undefined ? ["┌", "│", "└"] : ["┌", "│", "│", "└"];
+		const excerpt = this.excerpt === undefined ? undefined : truncateToWidth(this.excerpt, innerWidth, "");
 		return [
 			`┌${"─".repeat(innerWidth)}┐`,
 			`│${content}│`,
+			...(excerpt === undefined
+				? []
+				: [`│${excerpt}${" ".repeat(Math.max(0, innerWidth - visibleWidth(excerpt)))}│`]),
 			`└${"─".repeat(leftRuleWidth)}${renderedButtons ? " " : ""}${renderedButtons}${renderedButtons ? " " : ""}${"─".repeat(rightRuleWidth)}┘`,
 		];
 	}

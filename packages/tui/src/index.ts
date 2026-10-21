@@ -1,3 +1,4 @@
+export type { AltScreenSearchSource, AltScreenSearchSourceUnit } from "./alt-screen-search.ts";
 // Core TUI interfaces and classes
 
 export { Marked, type Token, type Tokens } from "marked";
