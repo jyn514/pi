@@ -146,13 +146,31 @@ export function transcriptUnitFragments(unit: TranscriptUnit): string[] {
 export function transcriptUnitPreview(unit: TranscriptUnit): string {
 	if (unit.kind !== "message") return unit.label;
 	const message = unit.message;
+	const textBlock =
+		"content" in message && Array.isArray(message.content)
+			? message.content.find((c) => c.type === "text" && (message.role !== "assistant" || c.text.trim()))
+			: undefined;
+	if (message.role === "assistant" && !textBlock) {
+		for (const block of message.content) {
+			if (block.type !== "thinking") continue;
+			// Inspect only a bounded opening line, not the reasoning body or rendered Markdown.
+			const line = block.thinking
+				.slice(0, 120)
+				.trimStart()
+				.split(/[\r\n]/, 1)[0]
+				.trimEnd();
+			const title = line.match(/^\*\*(.+)\*\*$/);
+			const preview = title && !title[1].includes("**") ? title[1] : line;
+			if (preview) return `${unit.label}: ${preview}`;
+		}
+	}
 	const text =
 		message.role === "compactionSummary" || message.role === "branchSummary"
 			? message.summary
 			: "content" in message && typeof message.content === "string"
 				? message.content
-				: "content" in message && Array.isArray(message.content)
-					? (message.content.find((c) => c.type === "text")?.text ?? "")
+				: textBlock?.type === "text"
+					? textBlock.text
 					: "";
 	return `${unit.label}${text ? `: ${text.slice(0, 120)}` : ""}`;
 }

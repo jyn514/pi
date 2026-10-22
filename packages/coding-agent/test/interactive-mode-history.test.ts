@@ -173,6 +173,53 @@ describe("lazy historical transcript", () => {
 		}
 	});
 
+	it.each([
+		[
+			"bold opening line",
+			["**Evaluating local resources**\n\nMore reasoning."],
+			undefined,
+			"Evaluating local resources",
+		],
+		["plain opening line", ["Evaluating local resources\nMore reasoning."], undefined, "Evaluating local resources"],
+		[
+			"leading blank lines",
+			["\n \n **Evaluating local resources**\r\nMore reasoning."],
+			undefined,
+			"Evaluating local resources",
+		],
+		["blank thinking block", [" \n", "**Evaluating local resources**"], undefined, "Evaluating local resources"],
+		["blank text block", ["**Evaluating local resources**"], [" \n"], "Evaluating local resources"],
+		["visible text wins", ["**Evaluating local resources**"], ["Visible response"], "Visible response"],
+		[
+			"blank blocks before visible text",
+			["**Reasoning title**"],
+			["", " \n", "Visible response"],
+			"Visible response",
+		],
+		["multiple bold spans", ["**First** and **second**\nMore reasoning"], undefined, "**First** and **second**"],
+		["asterisk inside a bold title", ["**2 * 3**\nMore reasoning"], undefined, "2 * 3"],
+		["bounded opening line", ["x".repeat(10000)], undefined, "x".repeat(120)],
+		["bounded leading whitespace", [`${"\n".repeat(200)}Later reasoning`], undefined, ""],
+		[
+			"large reasoning body",
+			[`**Evaluating local resources**\n${"More reasoning. ".repeat(10000)}`],
+			undefined,
+			"Evaluating local resources",
+		],
+	] as const)("previews thinking-only entries without constructing bodies: %s", (_name, thinking, text, preview) => {
+		const { host, sessionManager, headings } = createHistory();
+		const content: AssistantMessage["content"] = thinking.map((value) => ({ type: "thinking", thinking: value }));
+		for (const value of text ?? []) content.push({ type: "text", text: value });
+		const first = sessionManager.appendMessage({ ...assistantMsg(""), content });
+		sessionManager.appendCompaction("summary", first, 1);
+		const construct = vi.spyOn(host, "createHistoricalBody");
+		host.renderInitialMessages();
+		const lines = headings()[0].render(200);
+		expect(lines).toHaveLength(1);
+		expect(stripAnsi(lines[0]).trimEnd()).toBe(` ▸ Assistant${preview ? `: ${preview}` : ""}`);
+		expect(construct).not.toHaveBeenCalled();
+	});
+
 	it.each(["dark", "light"])("keeps normal component colors on closed headings with the %s theme", async (name) => {
 		initTheme(name);
 		const { host, sessionManager, headings } = createHistory();
