@@ -100,7 +100,7 @@ export class HistoricalEntryComponent extends Container {
 							historicalPreview = undefined;
 						}
 					}
-					const title = `${failed ? "[failed/aborted] " : ""}${plainLabel}`;
+					const title = `${failed ? "[error] " : ""}${plainLabel}`;
 					const label = `${title}${argumentPreview ? ` ${argumentPreview}` : ""}`;
 					// Keep ANSI and the non-ASCII marker out of ordinary label truncation's ASCII fast path.
 					let text =
