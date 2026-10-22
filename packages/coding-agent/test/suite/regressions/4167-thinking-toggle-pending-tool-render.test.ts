@@ -1,6 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ToolResultMessage, Usage } from "@earendil-works/pi-ai";
-import { Container, Text, type TUI } from "@earendil-works/pi-tui";
+import { type Component, Container, Text, type TUI } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
 import type { SessionEntry } from "../../../src/core/session-manager.ts";
@@ -35,6 +35,9 @@ type RenderSessionItems = (
 ) => void;
 
 type RenderSessionContextThis = {
+	completedMessageBindings: WeakMap<AgentMessage, Map<string, Component>>;
+	completedToolOwners: Map<string, { message: AssistantMessage; part: number }>;
+	transcriptBindings: Map<string, Component>;
 	pendingTools: Map<string, ToolExecutionComponent>;
 	chatContainer: Container;
 	footer: { invalidate(): void };
@@ -63,6 +66,9 @@ type HandleEvent = (this: RenderSessionContextThis, event: AgentSessionEvent) =>
 function createFakeInteractiveModeThis(): RenderSessionContextThis {
 	const chatContainer = new Container();
 	return {
+		completedMessageBindings: new WeakMap(),
+		completedToolOwners: new Map(),
+		transcriptBindings: new Map(),
 		pendingTools: new Map<string, ToolExecutionComponent>(),
 		chatContainer,
 		footer: { invalidate: vi.fn() },
