@@ -1559,10 +1559,11 @@ export interface SessionBeforeTreeResult {
 // ============================================================================
 
 export interface MessageRenderOptions {
+	/** Always false for historical headings. */
 	expanded: boolean;
-	/** Horizontal padding configured by the outputPad setting. */
+	/** Horizontal padding configured by outputPad, or zero for historical headings. */
 	outputPad: number;
-	/** Vertical padding configured by the outputPadY setting. */
+	/** Vertical padding configured by outputPadY, or zero for historical headings. */
 	outputPadY: number;
 }
 
@@ -1585,6 +1586,12 @@ export type MessageRenderer<T = unknown> = (
 	options: MessageRenderOptions,
 	theme: Theme,
 ) => Component | undefined;
+
+/** Normal and optional historical renderers belong to one registration and extension owner. */
+export interface RegisteredMessageRenderer {
+	render: MessageRenderer;
+	renderHistorical?: MessageRenderer;
+}
 
 export type EntryRenderer<T = unknown> = (
 	entry: CustomEntry<T>,
@@ -1744,7 +1751,18 @@ export interface ExtensionAPI {
 	// =========================================================================
 
 	/** Register a custom renderer for CustomMessageEntry. */
-	registerMessageRenderer<T = unknown>(customType: string, renderer: MessageRenderer<T>): void;
+	registerMessageRenderer<T = unknown>(
+		customType: string,
+		renderer: MessageRenderer<T>,
+		options?: {
+			/**
+			 * Cheap one-line heading for pre-compaction messages, separate from the lazy normal body.
+			 * Receives expanded: false and zero padding. Pi displays only its first rendered line,
+			 * preserves its colors, and falls back to the generic heading on undefined or failed output.
+			 */
+			renderHistorical?: MessageRenderer<T>;
+		},
+	): void;
 
 	/** Register a transformer for user and assistant Markdown before Pi renders it in the interactive transcript. */
 	registerMarkdownTransformer(transformer: MarkdownTransformer): void;
@@ -2319,7 +2337,7 @@ export interface Extension {
 	sourceInfo: SourceInfo;
 	handlers: Map<string, HandlerFn[]>;
 	tools: Map<string, RegisteredTool>;
-	messageRenderers: Map<string, MessageRenderer>;
+	messageRenderers: Map<string, RegisteredMessageRenderer>;
 	toolRenderers?: ToolRendererResolver[];
 	markdownTransformer?: MarkdownTransformer;
 	entryRenderers?: Map<string, EntryRenderer>;

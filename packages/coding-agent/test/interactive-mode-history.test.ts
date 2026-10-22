@@ -12,11 +12,16 @@ import {
 	type TUI,
 	TuiAltScreen,
 	VStack,
+	visibleWidth,
 } from "@earendil-works/pi-tui";
 import xterm from "@xterm/headless";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import type { AgentSessionEvent } from "../src/core/agent-session.ts";
+import { AuthStorage } from "../src/core/auth-storage.ts";
+import { createEventBus } from "../src/core/event-bus.ts";
+import { createExtensionRuntime, loadExtensionFromFactory } from "../src/core/extensions/loader.ts";
+import { ExtensionRunner } from "../src/core/extensions/runner.ts";
 import type { EntryRenderer, MessageRenderer } from "../src/core/extensions/types.ts";
 import { createCustomMessage } from "../src/core/messages.ts";
 import { type SessionEntry, SessionManager } from "../src/core/session-manager.ts";
@@ -33,6 +38,7 @@ import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 import { collectTranscriptUnits, type TranscriptUnit } from "../src/modes/interactive/transcript-history.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
+import { createInMemoryModelRegistry } from "./model-runtime-test-utils.ts";
 import { assistantMsg, userMsg } from "./utilities.ts";
 
 interface HistoryHarness {
@@ -61,8 +67,19 @@ interface HistoryHarness {
 }
 
 /** The production initialization path with in-memory branch membership, renderers, and layout. */
-function createHistory(sessionManager = SessionManager.inMemory(), entryRenderers = new Map<string, EntryRenderer>()) {
+function createHistory(
+	sessionManager = SessionManager.inMemory(),
+	entryRenderers = new Map<string, EntryRenderer>(),
+	suppliedExtensionRunner?: ExtensionRunner,
+) {
 	const settingsManager = SettingsManager.inMemory({ showCacheMissNotices: false });
+	const extensionRunner = suppliedExtensionRunner ?? {
+		getEntryRenderer: (name: string) => entryRenderers.get(name),
+		getMessageRenderer: (): MessageRenderer | undefined => undefined,
+		getHistoricalMessageRenderer: (_name: string): MessageRenderer | undefined => undefined,
+		getMarkdownTransformers: () => [],
+		resolveToolRenderers: (_name: string, fallback: () => unknown) => fallback(),
+	};
 	const chatContainer = new Container();
 	const documentContainer = new Container();
 	documentContainer.addChild(new Text("resources\nabove chat", 0, 0));
@@ -77,12 +94,7 @@ function createHistory(sessionManager = SessionManager.inMemory(), entryRenderer
 				retryAttempt: 0,
 				getSteeringMessages: () => [],
 				getFollowUpMessages: () => [],
-				extensionRunner: {
-					getEntryRenderer: (name: string) => entryRenderers.get(name),
-					getMessageRenderer: () => undefined,
-					getMarkdownTransformers: () => [],
-					resolveToolRenderers: (_name: string, fallback: () => unknown) => fallback(),
-				},
+				extensionRunner,
 				getToolDefinition: () => undefined,
 			},
 		},
@@ -124,6 +136,7 @@ function createHistory(sessionManager = SessionManager.inMemory(), entryRenderer
 	return {
 		host,
 		sessionManager,
+		extensionRunner,
 		text: () => stripAnsi(documentContainer.render(100).join("\n")),
 		headings: () => host.historicalContainer.children as HistoricalEntryComponent[],
 	};
@@ -302,6 +315,96 @@ describe("lazy historical transcript", () => {
 		expect(construct).not.toHaveBeenCalled();
 	});
 
+	it.each([
+		["path", { path: "/tmp/result.txt" }, "/tmp/result.txt"],
+		["file_path", { file_path: "/tmp/alias.txt" }, "/tmp/alias.txt"],
+		["command", { command: "printf hello" }, "printf hello"],
+		["preferred alias", { file_path: "alias", path: "path", command: "command" }, "alias"],
+		["empty alias", { file_path: "", path: "path" }, "path"],
+		["blank alias", { file_path: "\n\t", path: "path" }, "path"],
+		["invalid alias", { file_path: { nested: "ignored" }, path: "path" }, "path"],
+		["terminal controls", { command: "echo hello\nnext\t\x1b[31m" }, "echo hello next  [31m"],
+		["bounded string", { path: "x".repeat(10000) }, `${"x".repeat(120)}…`],
+		["wide characters", { path: "/tmp/文件-🧭.txt" }, "/tmp/文件-🧭.txt"],
+		["unknown argument", { query: "not a header" }, ""],
+		["non-string argument", { path: 42, command: { nested: "ignored" } }, ""],
+	] as const)("previews the first supported string argument without rendering bodies: %s", (_name, args, preview) => {
+		const { host, sessionManager, headings } = createHistory();
+		const first = sessionManager.appendMessage({
+			...tool("call", ""),
+			content: [{ type: "toolCall", id: "call", name: "some_tool", arguments: args }],
+		});
+		sessionManager.appendCompaction("summary", first, 1);
+		const construct = vi.spyOn(host, "createHistoricalBody");
+		host.renderInitialMessages();
+		const lines = headings()[0].render(200);
+		expect(lines).toHaveLength(1);
+		expect(stripAnsi(lines[0]).trimEnd()).toBe(` ▸ some_tool${preview ? ` ${preview}` : ""}`);
+		expect(stripAnsi(lines[0])).not.toMatch(/[\x00-\x1f\x7f-\x9f]/);
+		for (const width of [0, 1, 2, 3, 4, 5, 6, 12, 20, 80]) {
+			const narrow = headings()[0].render(width);
+			expect(narrow).toHaveLength(1);
+			expect(visibleWidth(narrow[0])).toBe(width);
+		}
+		expect(construct).not.toHaveBeenCalled();
+	});
+
+	it("reads only the selected argument once and keeps the action bold but its preview normal weight", async () => {
+		const { host, sessionManager, headings } = createHistory();
+		const path = vi.fn(() => "/tmp/result.txt");
+		const args = Object.defineProperties(
+			{},
+			{
+				path: { get: path, enumerable: true },
+				content: {
+					get: () => {
+						throw new Error("must not inspect file contents");
+					},
+					enumerable: true,
+				},
+				command: {
+					get: () => {
+						throw new Error("must stop after finding a path");
+					},
+					enumerable: true,
+				},
+				toJSON: {
+					get: () => {
+						throw new Error("must not serialize arguments");
+					},
+				},
+			},
+		);
+		const first = sessionManager.appendMessage({
+			...tool("call", ""),
+			content: [{ type: "toolCall", id: "call", name: "write", arguments: args }],
+		});
+		sessionManager.appendCompaction("summary", first, 1);
+		const construct = vi.spyOn(host, "createHistoricalBody");
+		host.renderInitialMessages();
+		const heading = headings()[0];
+		const terminal = new xterm.Terminal({ cols: 80, rows: 2, allowProposedApi: true });
+		try {
+			await new Promise<void>((resolve) =>
+				terminal.write(`${heading.render(80).join("\r\n")}\r\n${theme.fg("accent", "preview")}`, resolve),
+			);
+			const line = terminal.buffer.active.getLine(0)!;
+			expect(line.translateToString(true).trimEnd()).toBe(" ▸ write /tmp/result.txt");
+			expect(line.getCell(3)!.isBold()).not.toBe(0);
+			expect(line.getCell(9)!.isBold()).toBe(0);
+			const reference = terminal.buffer.active.getLine(1)!.getCell(0)!;
+			expect(line.getCell(9)!.getFgColorMode()).toBe(reference.getFgColorMode());
+			expect(line.getCell(9)!.getFgColor()).toBe(reference.getFgColor());
+		} finally {
+			terminal.dispose();
+		}
+		heading.render(12);
+		heading.invalidate();
+		heading.render(80);
+		expect(path).toHaveBeenCalledOnce();
+		expect(construct).not.toHaveBeenCalled();
+	});
+
 	it("reuses heading formatting until resize, expansion, or invalidation without constructing closed bodies", () => {
 		const body = vi.fn(() => new Text("opened body", 0, 0));
 		const session = SessionManager.inMemory();
@@ -449,6 +552,88 @@ describe("lazy historical transcript", () => {
 		} finally {
 			renderer.stop({ preserveScreen: true });
 		}
+	});
+
+	it("opens historical tool output, bash output, and summaries fully without changing live expansion", () => {
+		const { host, sessionManager, headings, text } = createHistory();
+		const first = sessionManager.appendMessage({
+			...tool("old-tool", ""),
+			content: [{ type: "toolCall", id: "old-tool", name: "read", arguments: { path: "file.txt" } }],
+		});
+		sessionManager.appendMessage({
+			role: "toolResult",
+			toolCallId: "old-tool",
+			toolName: "read",
+			content: [{ type: "text", text: Array.from({ length: 40 }, (_, i) => `tool-line-${i}`).join("\n") }],
+			isError: false,
+			timestamp: 0,
+		});
+		sessionManager.appendMessage({
+			role: "bashExecution",
+			command: "not executed",
+			output: Array.from({ length: 40 }, (_, i) => `bash-line-${i}`).join("\n"),
+			exitCode: 0,
+			cancelled: false,
+			truncated: false,
+			timestamp: 0,
+		});
+		sessionManager.appendCompaction(`${"summary ".repeat(30)}historical-summary-tail`, first, 1);
+		sessionManager.appendCompaction("live-summary-must-stay-collapsed", first, 1);
+		host.renderInitialMessages();
+		expect(text()).not.toContain("tool-line-39");
+		expect(text()).not.toContain("bash-line-0");
+		expect(text()).not.toContain("historical-summary-tail");
+		for (const heading of headings()) heading.setExpanded(true);
+		expect(text()).toContain("tool-line-39");
+		expect(text()).toContain("bash-line-0");
+		expect(text()).toContain("historical-summary-tail");
+		expect(text()).not.toContain("live-summary-must-stay-collapsed");
+		for (const heading of headings()) {
+			heading.setExpanded(false);
+			heading.setExpanded(true);
+		}
+		expect(text()).toContain("tool-line-39");
+		expect(text()).toContain("historical-summary-tail");
+	});
+
+	it("shows historical reasoning on opening without changing hidden live reasoning", () => {
+		const { host, sessionManager, headings, text } = createHistory();
+		Object.assign(host, { hideThinkingBlock: true });
+		const first = sessionManager.appendMessage({
+			...assistantMsg(""),
+			content: [{ type: "thinking", thinking: "**Old thought**\nhistorical reasoning tail" }],
+		});
+		sessionManager.appendCompaction("summary", first, 1);
+		sessionManager.appendMessage({
+			...assistantMsg(""),
+			content: [{ type: "thinking", thinking: "live reasoning remains hidden" }],
+		});
+		host.renderInitialMessages();
+		expect(text()).not.toContain("historical reasoning tail");
+		headings()[0].setExpanded(true);
+		expect(text()).toContain("historical reasoning tail");
+		expect(text()).not.toContain("live reasoning remains hidden");
+		expect(text()).toContain("Thinking...");
+		host.historicalContainer.invalidate();
+		expect(text()).toContain("historical reasoning tail");
+	});
+
+	it("expands descendants even when their parent container is itself expandable", () => {
+		const nested = Object.assign(new Text("nested collapsed", 0, 0), {
+			setExpanded: vi.fn((expanded: boolean) => nested.setText(expanded ? "nested expanded" : "nested collapsed")),
+		});
+		const parent = Object.assign(new Container(), { setExpanded: vi.fn<(expanded: boolean) => void>() });
+		parent.addChild(nested);
+		const { host, sessionManager, headings, text } = createHistory(undefined, new Map([["fixture", () => parent]]));
+		const first = sessionManager.appendCustomEntry("fixture");
+		sessionManager.appendCompaction("summary", first, 1);
+		host.renderInitialMessages();
+		expect(parent.setExpanded).not.toHaveBeenCalled();
+		expect(nested.setExpanded).not.toHaveBeenCalled();
+		headings()[0].setExpanded(true);
+		expect(parent.setExpanded).toHaveBeenCalledWith(true);
+		expect(nested.setExpanded).toHaveBeenCalledWith(true);
+		expect(text()).toContain("nested expanded");
 	});
 
 	it("opens tool images with normal graphics and honors disabled-image settings on a prefix rebuild", () => {
@@ -829,6 +1014,132 @@ describe("lazy historical transcript", () => {
 		expect(host.chatContainer.children).toContain(live);
 	});
 
+	it("uses an explicitly registered historical renderer without constructing the normal custom-message body", async () => {
+		const sessionManager = SessionManager.inMemory();
+		const runtime = createExtensionRuntime();
+		const normal = vi.fn<MessageRenderer<{ agent_name: string }>>(
+			(message, { expanded }) => new Text(expanded ? String(message.content) : "normal collapsed body", 0, 0),
+		);
+		const historical = vi.fn<MessageRenderer<{ agent_name: string }>>(
+			(message, _options, palette) =>
+				new Text(
+					palette.fg("success", `✓ ${message.details?.agent_name} completed\nnot part of the heading`),
+					0,
+					0,
+				),
+		);
+		const extension = await loadExtensionFromFactory(
+			(pi) => {
+				pi.registerMessageRenderer("completion", normal, { renderHistorical: historical });
+			},
+			process.cwd(),
+			createEventBus(),
+			runtime,
+		);
+		const modelRegistry = await createInMemoryModelRegistry(AuthStorage.inMemory());
+		const runner = new ExtensionRunner([extension], runtime, process.cwd(), sessionManager, modelRegistry);
+		const { host, headings, text } = createHistory(sessionManager, undefined, runner);
+		const first = sessionManager.appendCustomMessageEntry("completion", "full completion body", true, {
+			agent_name: "helper",
+		});
+		sessionManager.appendCompaction("summary", first, 1);
+		host.renderInitialMessages();
+		expect(historical).toHaveBeenCalledOnce();
+		expect(historical).toHaveBeenLastCalledWith(
+			expect.objectContaining({ details: { agent_name: "helper" } }),
+			{ expanded: false, outputPad: 0, outputPadY: 0 },
+			expect.anything(),
+		);
+		expect(normal).not.toHaveBeenCalled();
+		const preview = historical.mock.results[0].value!;
+		const render = vi.spyOn(preview, "render");
+		const invalidate = vi.spyOn(preview, "invalidate");
+		const heading = headings()[0];
+		const lines = heading.render(80);
+		expect(lines).toHaveLength(1);
+		expect(stripAnsi(lines[0]).trimEnd()).toBe(" ▸ ✓ helper completed");
+		heading.render(80);
+		expect(render).toHaveBeenCalledOnce();
+		heading.render(40);
+		expect(render).toHaveBeenCalledTimes(2);
+		heading.invalidate();
+		heading.render(40);
+		expect(render).toHaveBeenCalledTimes(3);
+		expect(invalidate).toHaveBeenCalled();
+		expect(historical).toHaveBeenCalledOnce();
+		expect(normal).not.toHaveBeenCalled();
+		const terminal = new xterm.Terminal({ cols: 80, rows: 2, allowProposedApi: true });
+		try {
+			await new Promise<void>((resolve) =>
+				terminal.write(`${lines[0]}\r\n${theme.fg("success", "reference")}`, resolve),
+			);
+			const actual = terminal.buffer.active.getLine(0)!.getCell(3)!;
+			const expected = terminal.buffer.active.getLine(1)!.getCell(0)!;
+			expect(actual.getFgColorMode()).toBe(expected.getFgColorMode());
+			expect(actual.getFgColor()).toBe(expected.getFgColor());
+		} finally {
+			terminal.dispose();
+		}
+		const fragments = host
+			.createTranscriptSearchSource()
+			.snapshot()
+			.flatMap((unit) => unit.fragments);
+		expect(fragments).toContain("full completion body");
+		expect(fragments).not.toContain("✓ helper completed");
+		expect(normal).not.toHaveBeenCalled();
+		heading.setExpanded(true);
+		expect(text()).toContain("full completion body");
+		expect(normal).toHaveBeenLastCalledWith(
+			expect.anything(),
+			{ expanded: true, outputPad: 0, outputPadY: 0 },
+			expect.anything(),
+		);
+		const normalCalls = normal.mock.calls.length;
+		host.rebuildHistoricalPrefix();
+		expect(historical).toHaveBeenCalledTimes(2);
+		expect(normal).toHaveBeenCalledTimes(normalCalls);
+	});
+
+	it.each(["absent", "undefined", "empty", "factory error", "render error", "invalidation error"])(
+		"falls back safely from %s historical rendering without constructing the normal body",
+		(mode) => {
+			const { host, sessionManager, headings, extensionRunner } = createHistory();
+			const render = vi.fn(() => {
+				if (mode === "render error") throw new Error("preview rendering failed");
+				return mode === "empty" ? [] : ["pretty preview"];
+			});
+			const historical = vi.fn<MessageRenderer>(() => {
+				if (mode === "factory error") throw new Error("preview construction failed");
+				if (mode === "undefined") return undefined;
+				return {
+					render,
+					invalidate: () => {
+						if (mode === "invalidation error") throw new Error("preview invalidation failed");
+					},
+				};
+			});
+			const normal = vi.fn<MessageRenderer>(() => new Text("normal body", 0, 0));
+			extensionRunner.getHistoricalMessageRenderer = () => (mode === "absent" ? undefined : historical);
+			extensionRunner.getMessageRenderer = () => normal;
+			const first = sessionManager.appendCustomMessageEntry("completion", "raw body", true);
+			sessionManager.appendCompaction("summary", first, 1);
+			host.renderInitialMessages();
+			const heading = headings()[0];
+			heading.render(80);
+			heading.invalidate();
+			expect(stripAnsi(heading.render(80).join("\n"))).toContain("completion: raw body");
+			expect(normal).not.toHaveBeenCalled();
+			expect(historical).toHaveBeenCalledTimes(mode === "absent" ? 0 : 1);
+			if (mode === "render error") expect(render).toHaveBeenCalledOnce();
+			expect(() => heading.setExpanded(true)).not.toThrow();
+			expect(normal).toHaveBeenLastCalledWith(
+				expect.anything(),
+				{ expanded: true, outputPad: 0, outputPadY: 0 },
+				expect.anything(),
+			);
+		},
+	);
+
 	it("preserves custom renderer visibility without laying out hidden bodies", () => {
 		const bodyRender = vi.fn(() => ["custom rendered-only text"]);
 		const visible = vi.fn(() => ({ render: bodyRender, invalidate: () => {} }));
@@ -859,21 +1170,22 @@ describe("lazy historical transcript", () => {
 		).not.toContain("opaque");
 		host.setToolsExpanded(true);
 		expect(text()).toContain("custom rendered-only text");
-		expect(visible).toHaveBeenCalledOnce();
+		expect(visible).toHaveBeenCalledTimes(2);
+		expect(visible).toHaveBeenLastCalledWith(expect.anything(), { expanded: true, outputPadY: 0 }, expect.anything());
 		host.documentContainer.invalidate();
 		expect(text()).toContain("custom rendered-only text");
 		headings()[0].setExpanded(false);
 		headings()[0].setExpanded(true);
-		expect(visible).toHaveBeenCalledOnce();
+		expect(visible).toHaveBeenCalledTimes(2);
 
 		host.rebuildHistoricalPrefix();
-		expect(visible).toHaveBeenCalledTimes(2);
+		expect(visible).toHaveBeenCalledTimes(3);
 		expect(hidden).toHaveBeenCalledTimes(2);
 		expect(visible).toHaveBeenLastCalledWith(expect.anything(), { expanded: true, outputPadY: 0 }, expect.anything());
 		headings()[0].setExpanded(true);
 		host.documentContainer.invalidate();
 		expect(text()).toContain("custom rendered-only text");
-		expect(visible).toHaveBeenCalledTimes(2);
+		expect(visible).toHaveBeenCalledTimes(3);
 	});
 
 	it("idle reload discards old renderers in both sections before session_start appends fresh entries", async () => {

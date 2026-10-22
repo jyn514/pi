@@ -5,6 +5,8 @@
 ### Added
 
 - Preview the opening reasoning line in collapsed headings for thinking-only assistant entries.
+- Show bounded path or command previews in collapsed historical tool headings without constructing tool bodies.
+- Added optional `renderHistorical` message-renderer registration for cheap, extension-formatted historical headings.
 - Show pre-compaction history as lazy collapsed headings across the selected branch, and search original completed transcript text in fullscreen mode without opening older bodies.
 - Added `editContextLines` to configure unchanged lines in new edit previews and results, plus `contextLines` for SDK edit tools. The default remains `4`; `0` shows only changes.
 - Added fenced pending-input handoff and awaitable fresh-input admission to sessions and extension command contexts, plus `allowedWhilePaused` control commands.
@@ -19,6 +21,7 @@
 ### Fixed
 
 - Keep normal message colors and tool-status backgrounds on collapsed historical headings instead of dimming the entire older transcript.
+- Expand tool output, reasoning, summaries, and custom-message details when opening historical entries, without changing live expansion settings.
 - Fixed pending-input loss after recording or deferred-preflight failures, overlapping prompts falsely reporting started, and handoff observer failures invalidating captured work.
 - Fixed standalone Bun builds failing bytecode generation for extension aliases by compiling ES module bytecode.
 - Fixed native text reads allocating entire files before offset and output limits were applied, including oversized single lines.

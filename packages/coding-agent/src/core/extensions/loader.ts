@@ -293,9 +293,16 @@ function createExtensionAPI(
 			}
 		},
 
-		registerMessageRenderer<T>(customType: string, renderer: MessageRenderer<T>): void {
+		registerMessageRenderer<T>(
+			customType: string,
+			renderer: MessageRenderer<T>,
+			options?: { renderHistorical?: MessageRenderer<T> },
+		): void {
 			assertActive();
-			extension.messageRenderers.set(customType, renderer as MessageRenderer);
+			extension.messageRenderers.set(customType, {
+				render: renderer as MessageRenderer,
+				renderHistorical: options?.renderHistorical as MessageRenderer | undefined,
+			});
 		},
 
 		registerMarkdownTransformer(transformer: MarkdownTransformer): void {

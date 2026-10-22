@@ -17,7 +17,8 @@ Before its latest actual compaction entry, show collapsed headings for displayed
 At and after that entry, render normally; without compaction, render normally throughout.
 Retained context entries before the cutoff remain historical for display and appear only once.
 
-- **Decided:** opening a historical heading constructs its normal body through existing renderers.
+- **Decided:** opening a historical heading constructs its normal body through existing renderers, with nested sections expanded.
+  This includes reasoning even when reasoning in the live suffix is hidden; it does not change live expansion settings.
   Persisted failure/abort signals have a visible indicator while their bodies remain closed.
 - **Decided:** use one original-text search for completed entries throughout the selected branch.
   A result navigates to its message/tool start and shows an excerpt; searching does not open historical bodies.
@@ -37,7 +38,8 @@ Retained context entries before the cutoff remain historical for display and app
   Retain opened bodies after collapse until the historical subtree is rebuilt or the view is replaced.
 
 This defers formatting and layout, not session-file parsing.
-Do not change model context, session storage, tool execution, export, or extension renderer signatures.
+Do not change model context, session storage, tool execution, export, or tool renderer signatures.
+Custom-message registration may supply an optional `renderHistorical` renderer; existing message-renderer callbacks keep their signature.
 No hybrid search, live search synchronization, expansion-state restoration, background workers, eviction, new settings, or dependencies.
 Chunk loading, viewport virtualization, prepend compensation, and general reflow anchoring remain out of scope.
 
@@ -60,14 +62,23 @@ Reuse existing bulk message conversion, renderer fallbacks, summary/cost notices
 Refactor only what is needed to construct historical bodies in their own destination with local pairing state.
 Do not add a second streaming implementation or a general transcript framework.
 Omit tool-only assistant headings unless there is separate visible content or a diagnostic.
-Headings use bounded plain-text labels/previews, without Markdown, highlighting, full argument serialization, path resolution, or image conversion.
+Built-in headings use bounded plain-text labels/previews, without Markdown, highlighting, full argument serialization, path resolution, or image conversion.
+Tool headings select a string `file_path`, `path`, or `command` and limit its prefix before sanitizing it; other arguments stay uninspected.
+Calls without a supported string argument have name-only headings.
+Thinking-only assistant headings preview a bounded opening reasoning line, unwrapping a standalone bold title without rendering Markdown.
 Keep existing OSC 133 prompt markers on appropriate headings so prompt navigation reaches old messages without opening them.
 
 Preserve custom-entry visibility through `CustomEntryComponent.hasContent()`.
 Because its renderer can return no component, call it once per historical rebuild to determine visibility.
 This is the explicit lazy-construction exception: retain any returned component behind a heading without laying out the body.
 Keep entries without a registered renderer and custom messages with `display: false` absent.
-Do not add extension preview/visibility/search APIs.
+Custom-message registrations pair the normal renderer with an optional `renderHistorical` renderer under the same extension owner.
+Only the historical renderer runs for closed headings; absent, undefined, or failed historical output falls back to the generic heading.
+Historical renderers receive collapsed, zero-padding options and must construct a cheap, single-line component.
+Pi retains that component for the heading, caches its first rendered line by width, and invalidates it with the heading.
+Its formatted text is display-only, never persisted, sent to the model, or included in search fragments.
+Opening uses the normal renderer in expanded mode and does not replace the heading or live suffix.
+Do not add extension visibility or search APIs.
 On a body-construction error outside existing fallbacks, retain the heading, report the failure once, and leave the live suffix usable.
 
 ### Rebuilds and cleanup

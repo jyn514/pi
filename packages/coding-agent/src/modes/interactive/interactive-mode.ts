@@ -4108,7 +4108,7 @@ export class InteractiveMode {
 		for (const unit of this.historicalUnits) this.transcriptBindings.delete(unit.id);
 		this.historicalContainer.clear();
 		for (const unit of this.historicalUnits) {
-			let customBody: Container | undefined;
+			let createBody = () => this.createHistoricalBody(unit);
 			if (unit.kind === "custom") {
 				const renderer = this.session.extensionRunner.getEntryRenderer(unit.entry.customType);
 				if (!renderer) continue;
@@ -4120,24 +4120,50 @@ export class InteractiveMode {
 					this.toolOutputExpanded,
 				);
 				if (!custom.hasContent()) continue;
-				// Retain the renderer's output, not the wrapper that reruns it on invalidation.
-				customBody = new Container();
-				for (const child of custom.children) customBody.addChild(child);
+				createBody = () => {
+					custom.setExpanded(true);
+					// Retain expanded output, not the wrapper that reruns its renderer on invalidation.
+					const body = new Container();
+					for (const child of custom.children) body.addChild(child);
+					return body;
+				};
 			}
 			if (unit.kind === "usage" && !this.settingsManager.getShowCacheMissNotices()) continue;
+			let historicalPreview: Component | undefined;
+			if (unit.kind === "message" && unit.message.role === "custom") {
+				const renderer = this.session.extensionRunner.getHistoricalMessageRenderer(unit.message.customType);
+				try {
+					historicalPreview = renderer?.(unit.message, { expanded: false, outputPad: 0, outputPadY: 0 }, theme);
+				} catch {
+					// An optional historical renderer must not prevent replay or force normal body construction.
+				}
+			}
 			const heading = new HistoricalEntryComponent(
 				unit,
-				() => customBody ?? this.createHistoricalBody(unit),
+				() => {
+					const body = createBody();
+					this.expandHistoricalBody(body);
+					return body;
+				},
 				(error) =>
 					this.showError(
 						`Could not open historical entry: ${error instanceof Error ? error.message : String(error)}`,
 					),
 				() => this.ui.requestRender(),
+				historicalPreview,
 			);
 			this.historicalContainer.addChild(heading);
 			this.transcriptBindings.set(unit.id, heading);
 		}
 		this.ui.requestRender();
+	}
+
+	private expandHistoricalBody(component: Component): void {
+		if (isExpandable(component)) component.setExpanded(true);
+		if (component instanceof AssistantMessageComponent) component.setHideThinkingBlock(false);
+		if (component instanceof Container) {
+			for (const child of component.children) this.expandHistoricalBody(child);
+		}
 	}
 
 	private createHistoricalBody(unit: TranscriptUnit): Component {

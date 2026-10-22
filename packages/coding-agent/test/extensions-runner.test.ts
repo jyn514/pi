@@ -21,6 +21,7 @@ import type {
 	ExtensionContextActions,
 	ExtensionFactory,
 	ExtensionUIContext,
+	MessageRenderer,
 	ProviderConfig,
 } from "../src/core/extensions/types.ts";
 import { KeybindingsManager, type KeyId } from "../src/core/keybindings.ts";
@@ -772,6 +773,45 @@ describe("ExtensionRunner", () => {
 
 			const missing = runner.getMessageRenderer("not-exists");
 			expect(missing).toBeUndefined();
+		});
+
+		it("keeps historical renderers with the winning message registration and clears replaced hooks", async () => {
+			const runtime = createExtensionRuntime();
+			const bus = createEventBus();
+			const normal: MessageRenderer = vi.fn(() => undefined);
+			const historical: MessageRenderer = vi.fn(() => undefined);
+			const other: MessageRenderer = vi.fn(() => undefined);
+			const first = await loadExtensionFromFactory(
+				(pi) => {
+					pi.registerMessageRenderer("with-history", normal, { renderHistorical: historical });
+					pi.registerMessageRenderer("normal-only", normal);
+					pi.registerMessageRenderer("replaced", normal, { renderHistorical: historical });
+					pi.registerMessageRenderer("replaced", other);
+				},
+				tempDir,
+				bus,
+				runtime,
+				"first",
+			);
+			const second = await loadExtensionFromFactory(
+				(pi) => {
+					pi.registerMessageRenderer("normal-only", other, { renderHistorical: historical });
+				},
+				tempDir,
+				bus,
+				runtime,
+				"second",
+			);
+			const runner = new ExtensionRunner([first, second], runtime, tempDir, sessionManager, modelRegistry);
+			expect(runner.getMessageRenderer("with-history")).toBe(normal);
+			expect(runner.getHistoricalMessageRenderer("with-history")).toBe(historical);
+			expect(runner.getMessageRenderer("normal-only")).toBe(normal);
+			expect(runner.getHistoricalMessageRenderer("normal-only")).toBeUndefined();
+			expect(runner.getMessageRenderer("replaced")).toBe(other);
+			expect(runner.getHistoricalMessageRenderer("replaced")).toBeUndefined();
+			expect(runner.getHistoricalMessageRenderer("missing")).toBeUndefined();
+			expect(normal).not.toHaveBeenCalled();
+			expect(historical).not.toHaveBeenCalled();
 		});
 
 		it("gets entry renderer by type", async () => {

@@ -38,12 +38,17 @@ The transcript shows the whole selected branch in chronological order.
 Messages before its latest compaction appear as collapsed headings, including messages retained in the model's current context.
 Collapsed headings retain normal message colors and tool-status backgrounds.
 Thinking-only assistant headings preview the opening line of their reasoning.
+Tool headings include a short preview when the call has a string `file_path`, `path`, or `command` argument.
+Other tool calls show only their name until opened.
+Extensions can supply a [compact historical renderer](extensions.md#ui-and-modes) for displayed custom messages, such as a subagent's name and completion status.
 The latest compaction summary and later messages use the normal view.
 Without a compaction, the normal view is unchanged.
 This does not change what is sent to the model.
 
 Click an older heading in fullscreen mode to open it, or use the configurable tool-expansion action (`Ctrl+O` by default) to expand all headings.
-Opening creates that entry's normal rendered body; closing and reopening reuses it.
+Opening creates that entry's normal rendered body with its tool output, reasoning, summaries, and custom-message details expanded.
+This does not change expansion in the current section.
+Closing and reopening reuses the body.
 Expanding all can be expensive for a long session.
 Failed or aborted older entries are marked even while closed.
 

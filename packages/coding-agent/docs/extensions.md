@@ -450,11 +450,25 @@ import { Text } from "@earendil-works/pi-tui";
 
 pi.registerMessageRenderer("status", (message, { outputPad, outputPadY }, theme) => {
   return new Text(theme.fg("accent", String(message.content)), outputPad, outputPadY);
+}, {
+  renderHistorical: (message, _options, theme) => {
+    const preview = typeof message.content === "string" ? message.content.slice(0, 120) : "Status update";
+    return new Text(theme.fg("accent", preview), 0, 0);
+  },
 });
 pi.registerEntryRenderer("status-card", (entry, { outputPadY }, theme) => {
   return new Text(theme.fg("accent", JSON.stringify(entry.data) ?? ""), 1, outputPadY);
 });
 ```
+
+The optional third argument to `registerMessageRenderer()` supplies `renderHistorical`, a separate heading renderer for pre-compaction messages.
+It has the normal renderer's signature, but receives `{ expanded: false, outputPad: 0, outputPadY: 0 }`.
+Construct a cheap, single-line component from bounded text or metadata; do not format the full body.
+Pi preserves its colors, displays only its first rendered line, caches that line by width, and forwards invalidation to the retained component.
+Returning `undefined`, empty output, or throwing falls back to the generic heading without calling the normal renderer.
+Without the hook, the generic heading remains unchanged.
+Opening the heading creates the normal body with `expanded: true`; formatting from the historical hook is display-only and is not searchable.
+If the normal renderer already constructs a cheap summary when `expanded` is false, the same function can serve both roles.
 
 In fullscreen mode, left-clicking a custom message renderer's output toggles its `expanded` state unless a child component handles the event first.
 The configurable tool-output expansion action (Ctrl+O by default) also controls custom messages.

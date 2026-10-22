@@ -72,6 +72,7 @@ import type {
 	ProjectTrustEventResult,
 	ProviderConfig,
 	RegisteredCommand,
+	RegisteredMessageRenderer,
 	RegisteredTool,
 	ReplacedSessionContext,
 	ResolvedCommand,
@@ -832,14 +833,20 @@ export class ExtensionRunner {
 		return false;
 	}
 
-	getMessageRenderer(customType: string): MessageRenderer | undefined {
+	private getMessageRendererRegistration(customType: string): RegisteredMessageRenderer | undefined {
 		for (const ext of this.extensions) {
-			const renderer = ext.messageRenderers.get(customType);
-			if (renderer) {
-				return renderer;
-			}
+			const registration = ext.messageRenderers.get(customType);
+			if (registration) return registration;
 		}
 		return undefined;
+	}
+
+	getMessageRenderer(customType: string): MessageRenderer | undefined {
+		return this.getMessageRendererRegistration(customType)?.render;
+	}
+
+	getHistoricalMessageRenderer(customType: string): MessageRenderer | undefined {
+		return this.getMessageRendererRegistration(customType)?.renderHistorical;
 	}
 
 	getMarkdownTransformers(): MarkdownTransformer[] {
