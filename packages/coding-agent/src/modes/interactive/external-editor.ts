@@ -7,6 +7,7 @@ import { stripBom } from "../../utils/text.ts";
 export interface ExternalEditorOptions {
 	command: string;
 	content: string;
+	usesTerminal?: boolean;
 }
 
 export type ExternalEditorResult = { status: "complete"; content: string } | { status: "failed"; message: string };
@@ -17,7 +18,10 @@ export async function editInExternalEditor(options: ExternalEditorOptions): Prom
 	try {
 		writeFileSync(filePath, options.content, "utf-8");
 		const [editor, ...editorArgs] = options.command.split(" ");
-		process.stdout.write(`Launching external editor: ${options.command}\nPi will resume when the editor exits.\n`);
+		const usesTerminal = options.usesTerminal ?? true;
+		if (usesTerminal) {
+			process.stdout.write(`Launching external editor: ${options.command}\nPi will resume when the editor exits.\n`);
+		}
 
 		// Do not use spawnSync here. On Windows, synchronous child_process calls can keep
 		// Node/libuv's console input read active after the parent pauses stdin, racing
@@ -30,7 +34,7 @@ export async function editInExternalEditor(options: ExternalEditorOptions): Prom
 			// editors (code, notepad.exe) from the cwd's \\wsl.localhost\... path (#11592).
 			// The cwd is intentionally not changed; failures are reported to the user instead.
 			const child = spawn(editor, [...editorArgs, filePath], {
-				stdio: "inherit",
+				stdio: usesTerminal ? "inherit" : "ignore",
 				shell: process.platform === "win32",
 			});
 			child.on("error", () => resolve(null));

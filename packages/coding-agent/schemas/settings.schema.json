@@ -221,6 +221,11 @@
       "type": "string",
       "description": "Command for Ctrl+G external editor; takes precedence over VISUAL and EDITOR."
     },
+    "externalEditorUsesTerminal": {
+      "type": "boolean",
+      "description": "Whether the Ctrl+G external editor uses Pi's terminal. Set false for editors opened in another window or pane.",
+      "default": true
+    },
     "shellPath": {
       "type": "string",
       "description": "Custom shell path, for example for Cygwin on Windows, with support for leading ~ expansion."

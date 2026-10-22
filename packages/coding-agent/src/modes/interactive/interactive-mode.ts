@@ -4983,12 +4983,14 @@ export class InteractiveMode {
 
 	private async handleOpenExternalEditor(): Promise<void> {
 		const editorCmd = this.settingsManager.getExternalEditorCommand();
+		const usesTerminal = this.settingsManager.getExternalEditorUsesTerminal();
 		const content = this.editor.getExpandedText?.() ?? this.editor.getText();
-		this.ui.stop();
+		if (usesTerminal) this.ui.stop();
 		try {
 			const result = await editInExternalEditor({
 				command: editorCmd,
 				content,
+				usesTerminal,
 			});
 			if (result.status === "complete") {
 				this.editor.setText(result.content);
@@ -4996,8 +4998,8 @@ export class InteractiveMode {
 				this.showStatus(result.message);
 			}
 		} finally {
-			this.ui.start();
-			this.ui.requestRender(true);
+			if (usesTerminal) this.ui.start();
+			this.ui.requestRender(usesTerminal);
 		}
 	}
 
