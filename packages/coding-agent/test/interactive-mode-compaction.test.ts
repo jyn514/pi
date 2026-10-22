@@ -45,7 +45,7 @@ describe("InteractiveMode compaction events", () => {
 			settingsManager: { getShowCacheMissNotices: () => false },
 		};
 		addCompactionCostNotice.call(disabled, { type: "compaction_cost", kind: "compaction", usage });
-		expect(disabled.chatContainer.children).toHaveLength(0);
+		expect(disabled.chatContainer.render(120)).toHaveLength(0);
 	});
 
 	test("renders each compaction cost after its summary", () => {
@@ -87,7 +87,7 @@ describe("InteractiveMode compaction events", () => {
 				usage: previousUsage,
 			},
 		];
-		const fakeThis = { renderSessionItems: vi.fn() };
+		const fakeThis = { renderSessionItems: vi.fn(), completedMessageBindings: new WeakMap() };
 		const renderSessionEntries = Reflect.get(InteractiveMode.prototype, "renderSessionEntries") as (
 			this: typeof fakeThis,
 			entries: SessionEntry[],
@@ -106,7 +106,7 @@ describe("InteractiveMode compaction events", () => {
 		);
 	});
 
-	test("renders retained entries and appends the latest summary cost at the bottom", async () => {
+	test("rebuilds chronological history after successful compaction", async () => {
 		const usage: Usage = {
 			input: 10,
 			output: 20,
@@ -145,7 +145,7 @@ describe("InteractiveMode compaction events", () => {
 			statusContainer: { clear: vi.fn() },
 			chatContainer: { clear: vi.fn() },
 			sessionManager: { buildContextEntries: vi.fn().mockReturnValue([latestCompaction, previousCompaction]) },
-			renderSessionEntries: vi.fn(),
+			rebuildTranscript: vi.fn(),
 			addMessageToChat: vi.fn(),
 			addCompactionCostNotice: vi.fn(),
 			showError: vi.fn(),
@@ -180,21 +180,9 @@ describe("InteractiveMode compaction events", () => {
 			willRetry: false,
 		});
 
-		expect(fakeThis.chatContainer.clear).toHaveBeenCalledTimes(1);
-		expect(fakeThis.renderSessionEntries).toHaveBeenCalledWith([previousCompaction]);
-		expect(fakeThis.addMessageToChat).toHaveBeenCalledTimes(1);
-		expect(fakeThis.addMessageToChat).toHaveBeenCalledWith(
-			expect.objectContaining({
-				role: "compactionSummary",
-				tokensBefore: 123,
-				summary: "summary",
-			}),
-		);
-		expect(fakeThis.addCompactionCostNotice).toHaveBeenCalledWith({
-			type: "compaction_cost",
-			kind: "compaction",
-			usage,
-		});
+		expect(fakeThis.rebuildTranscript).toHaveBeenCalledOnce();
+		expect(fakeThis.addMessageToChat).not.toHaveBeenCalled();
+		expect(fakeThis.addCompactionCostNotice).not.toHaveBeenCalled();
 		expect(fakeThis.flushCompactionQueue).toHaveBeenCalledWith({ willRetry: false });
 	});
 

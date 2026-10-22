@@ -77,6 +77,13 @@ export class BashExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	setOutputPadY(outputPadY: 0 | 1): void {
+		this.outputPadY = outputPadY;
+		const spacer = this.children[0];
+		if (spacer instanceof Spacer) spacer.setLines(outputPadY);
+		this.updateDisplay();
+	}
+
 	override invalidate(): void {
 		super.invalidate();
 		this.updateDisplay();

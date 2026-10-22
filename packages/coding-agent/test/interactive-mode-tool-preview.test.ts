@@ -1,4 +1,5 @@
-import { Container } from "@earendil-works/pi-tui";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { type Component, Container } from "@earendil-works/pi-tui";
 import { beforeAll, expect, test, vi } from "vitest";
 import type { AgentSessionEvent } from "../src/core/agent-session.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -13,8 +14,11 @@ function createTranscript(toolPreviewLines: number) {
 	const host = {
 		settingsManager: SettingsManager.inMemory({ toolPreviewLines }),
 		sessionManager: SessionManager.inMemory(),
+		session: { modelRuntime: {} },
 		chatContainer: new Container(),
 		pendingTools: new Map<string, ToolExecutionComponent>(),
+		completedMessageBindings: new WeakMap<AgentMessage, Map<string, Component>>(),
+		completedToolOwners: new Map(),
 		toolOutputExpanded: false,
 		outputPad: 0,
 		outputPadY: 0,

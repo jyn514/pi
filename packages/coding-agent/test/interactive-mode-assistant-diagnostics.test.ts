@@ -77,7 +77,7 @@ describe("InteractiveMode assistant diagnostics", () => {
 			sessionManager: { getBranch: () => [] },
 		};
 		maybeShowThinkingDropNotice.call(disabled, message);
-		expect(disabled.chatContainer.children).toHaveLength(0);
+		expect(disabled.chatContainer.render(120)).toHaveLength(0);
 	});
 
 	test("does not repeat unchanged Anthropic thinking drops", () => {

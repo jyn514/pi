@@ -221,6 +221,15 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	setOutputPadY(outputPadY: 0 | 1): void {
+		this.outputPadY = outputPadY;
+		const spacer = this.children[0];
+		if (spacer instanceof Spacer) spacer.setLines(outputPadY);
+		this.contentBox.setPaddingY(outputPadY);
+		this.contentText.setPaddingY(outputPadY);
+		this.updateDisplay();
+	}
+
 	setShowImages(show: boolean): void {
 		this.showImages = show;
 		this.updateDisplay();

@@ -4,6 +4,7 @@
 
 ### Added
 
+- Show pre-compaction history as lazy collapsed headings across the selected branch, and search original completed transcript text in fullscreen mode without opening older bodies.
 - Added `editContextLines` to configure unchanged lines in new edit previews and results, plus `contextLines` for SDK edit tools. The default remains `4`; `0` shows only changes.
 - Added fenced pending-input handoff and awaitable fresh-input admission to sessions and extension command contexts, plus `allowedWhilePaused` control commands.
 - Added `toolPreviewLines` to control collapsed tool-result previews; `0` hides previews while retaining expansion, warnings, and tool headers. Write/edit call previews are unchanged.

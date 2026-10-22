@@ -32,6 +32,36 @@ The startup header lists the instructions and resources Pi loaded. The editor bo
 
 Pi does not ask before every tool call. Review commands and changed files, and use a sandbox for untrusted or unattended work. See [Security](security.md).
 
+## Read and search older history
+
+The transcript shows the whole selected branch in chronological order.
+Messages before its latest compaction appear as collapsed headings, including messages retained in the model's current context.
+The latest compaction summary and later messages use the normal view.
+Without a compaction, the normal view is unchanged.
+This does not change what is sent to the model.
+
+Click an older heading in fullscreen mode to open it, or use the configurable tool-expansion action (`Ctrl+O` by default) to expand all headings.
+Opening creates that entry's normal rendered body; closing and reopening reuses it.
+Expanding all can be expensive for a long session.
+Failed or aborted older entries are marked even while closed.
+
+Display-setting changes rebuild the older section with closed headings and current settings.
+Ordinary resize and switching between fullscreen and regular mode retain expansion state.
+Both modes share the same transcript; regular mode uses terminal scrollback, and `fullscreenExitOutput: "transcript"` prints this same view on exit.
+
+Fullscreen transcript search searches original completed text across the selected branch, including thinking,
+tool argument values (such as write contents and edit replacements), textual results, summaries, and displayed custom messages.
+It searches literal fragments rather than formatted screen rows.
+A hit goes to its message or tool heading and shows an excerpt without opening older bodies or highlighting formatted body text.
+
+Search captures a fixed snapshot on the first nonempty query.
+Empty search does not build an index; the first query can take longer on a large branch.
+Partial streaming output is excluded.
+Close and reopen search to include new completions.
+Binary/image data, opaque extension data and details, unseen full-output files, generated notices,
+and extension-only renderer text are not searchable.
+Replacing the transcript or rebuilding older headings closes active search.
+
 ## Change direction
 
 You can send more input while Pi is working:

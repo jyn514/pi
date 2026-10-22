@@ -4519,11 +4519,18 @@ export class AgentSession {
 	 * @param options.excludeFromContext If true, command output won't be sent to LLM (!! prefix)
 	 * @param options.id Optional identifier included in bash execution update events
 	 * @param options.operations Custom BashOperations for remote execution
+	 * @param options.onRecorded Receives the exact completed message after recording or queueing it.
+	 * Deferred messages are not yet persisted when this observer runs.
 	 */
 	async executeBash(
 		command: string,
 		onChunk?: (chunk: string) => void,
-		options?: { excludeFromContext?: boolean; id?: string; operations?: BashOperations },
+		options?: {
+			excludeFromContext?: boolean;
+			id?: string;
+			operations?: BashOperations;
+			onRecorded?: (message: BashExecutionMessage) => void;
+		},
 	): Promise<BashResult> {
 		const abortController = new AbortController();
 		this._bashAbortControllers.add(abortController);
@@ -4547,7 +4554,8 @@ export class AgentSession {
 				},
 			);
 
-			this.recordBashResult(command, result, options);
+			const message = this.recordBashResult(command, result, options);
+			options?.onRecorded?.(message);
 			return result;
 		} finally {
 			this._bashAbortControllers.delete(abortController);
@@ -4557,8 +4565,13 @@ export class AgentSession {
 	/**
 	 * Record a bash execution result in session history.
 	 * Used by executeBash and by extensions that handle bash execution themselves.
+	 * Returns the exact completed message, including when queued for deferred persistence.
 	 */
-	recordBashResult(command: string, result: BashResult, options?: { excludeFromContext?: boolean }): void {
+	recordBashResult(
+		command: string,
+		result: BashResult,
+		options?: { excludeFromContext?: boolean },
+	): BashExecutionMessage {
 		const bashMessage: BashExecutionMessage = {
 			role: "bashExecution",
 			command,
@@ -4579,6 +4592,7 @@ export class AgentSession {
 			this.sessionManager.appendMessage(bashMessage);
 			this._refreshFinalizedContext();
 		}
+		return bashMessage;
 	}
 
 	/**

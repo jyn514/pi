@@ -16,12 +16,19 @@ export class CustomEntryComponent extends Container {
 	private outputPad: number;
 	private outputPadY: 0 | 1;
 
-	constructor(entry: CustomEntry<unknown>, renderer: EntryRenderer, outputPad = 1, outputPadY: 0 | 1 = 1) {
+	constructor(
+		entry: CustomEntry<unknown>,
+		renderer: EntryRenderer,
+		outputPad = 1,
+		outputPadY: 0 | 1 = 1,
+		expanded = false,
+	) {
 		super();
 		this.entry = entry;
 		this.renderer = renderer;
 		this.outputPad = outputPad;
 		this.outputPadY = outputPadY;
+		this._expanded = expanded;
 		this.rebuild();
 	}
 
@@ -38,6 +45,11 @@ export class CustomEntryComponent extends Container {
 
 	setOutputPad(outputPad: number): void {
 		this.outputPad = outputPad;
+		this.rebuild();
+	}
+
+	setOutputPadY(outputPadY: 0 | 1): void {
+		this.outputPadY = outputPadY;
 		this.rebuild();
 	}
 

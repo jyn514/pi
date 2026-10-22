@@ -1,9 +1,14 @@
 # Show older transcript history as lazy collapsed entries
 
-Status: implementation plan, not implemented.
-Revised on October 22, 2026 for the selected smaller approach, against parent `12449f11`.
+Status: implemented and reviewed on October 22, 2026.
+The selected approach was planned against `12449f11`; implementation follows the plan commit `d4d78622`.
 This supersedes [the chunked-history proposal](compaction-chunked-history.md).
-Keep the existing uncommitted preview optimizations separate and do not alter their authored changes.
+The preview optimizations are a separate change, `6711cf7d`.
+
+Repository checks and focused application/TUI tests cover the implementation and subsequent review fixes.
+An isolated tmux smoke test resumes a synthetic compacted session offline and checks collapsed history,
+search of hidden message/tool text, expansion, and resize without provider calls.
+Benchmarks measure production construction/layout, not end-to-end CLI startup, and precede the final search/lifecycle review fixes.
 
 ## Contract and decisions
 
@@ -170,5 +175,5 @@ Follow `.pi/skills/interactive-testing.md` for a disposable compacted-session sm
 Repeat the three pinned-branch benchmarks through production initialization, not direct eager `renderSessionEntries(allEntries)` calls.
 Measure construction, first layout, resize, first/repeated query, reopen-search refresh, one-body expansion, settings rebuild, and retained memory separately.
 Compare current-context-only, eager full history, and the implemented view; retain runners/results under `.artifacts/scrollback-perf/`.
-The 0.60–0.66 s prototype in `.artifacts/scrollback-perf/inquiry/summary-v4.json` is not evidence for this unimplemented design.
+The 0.60–0.66 s prototype in `.artifacts/scrollback-perf/inquiry/summary-v4.json` does not establish performance of the final implementation.
 Report deferred search/expansion work and the custom-renderer exception, not a guaranteed startup speedup.

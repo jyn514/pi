@@ -181,6 +181,21 @@ Keep the default view compact and reveal detail through expansion or a dedicated
 
 Use `PI_TUI_WRITE_LOG` to capture the raw ANSI stream when diagnosing rendering problems. Test narrow widths, wide characters, resize events, theme changes, focus transitions, and both regular and fullscreen modes.
 
+### Older transcript entries
+
+Pi defers normal renderer construction for entries before the selected branch's latest compaction until their headings are opened.
+Display-setting changes rebuild this older section with closed headings; live tool instances are retained.
+Do not depend on a tool or message renderer being called during initial transcript construction.
+
+Custom-entry visibility is the exception: Pi calls its registered entry renderer during each older-section rebuild
+and uses `CustomEntryComponent.hasContent()` to decide whether to show a heading.
+A returned component is retained without laying out its hidden body.
+Entries without a renderer, renderer results without content, and custom messages with `display: false` remain absent.
+
+Fullscreen transcript search uses original completed text, not custom renderer output.
+Custom-message content is searchable when displayed, but opaque entry `data`, message/tool `details`, and renderer-generated text are not.
+There is no extension search or preview hook.
+
 ## Examples and source
 
 The checked extension examples cover the main patterns:

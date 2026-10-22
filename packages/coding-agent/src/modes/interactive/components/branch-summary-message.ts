@@ -35,6 +35,12 @@ export class BranchSummaryMessageComponent extends Box {
 		this.setPaddingX(outputPad);
 	}
 
+	setOutputPadY(outputPadY: 0 | 1): void {
+		this.outputPadY = outputPadY;
+		this.setPaddingY(outputPadY);
+		this.updateDisplay();
+	}
+
 	override invalidate(): void {
 		super.invalidate();
 		this.updateDisplay();
