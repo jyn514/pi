@@ -1,5 +1,6 @@
-import { type Component, Container, MouseRegion, truncateToWidth } from "@earendil-works/pi-tui";
-import { theme } from "../theme/theme.ts";
+import { type Component, Container, MouseRegion, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { type ThemeStyle, theme } from "../theme/theme.ts";
+import { type TranscriptUnit, transcriptUnitPreview } from "../transcript-history.ts";
 
 /** A cheap heading owns its optional body. Closing never discards an already constructed body. */
 export class HistoricalEntryComponent extends Container {
@@ -13,15 +14,48 @@ export class HistoricalEntryComponent extends Container {
 	private readonly prompt: boolean;
 
 	constructor(
-		label: string,
-		failed: boolean,
-		prompt: boolean,
+		unit: TranscriptUnit,
 		createBody: () => Component,
 		onError: (error: unknown) => void,
 		requestRender: () => void,
 	) {
 		super();
-		const plainLabel = label.slice(0, 160).replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
+		const plainLabel = transcriptUnitPreview(unit)
+			.slice(0, 160)
+			.replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
+		const failed = unit.failed;
+		const prompt = unit.kind === "message" && (unit.message.role === "user" || unit.message.role === "assistant");
+		let style: ThemeStyle = {};
+		if (unit.kind === "tool") {
+			style = {
+				fg: "toolTitle",
+				bg: failed ? "toolErrorBg" : unit.result ? "toolSuccessBg" : "toolPendingBg",
+				bold: true,
+			};
+		} else if (unit.kind === "custom") {
+			style = { fg: "customMessageLabel", bg: "customMessageBg", bold: true };
+		} else if (unit.kind === "usage") {
+			style = { fg: "dim" };
+		} else {
+			switch (unit.message.role) {
+				case "user":
+					style = { fg: "userMessageText", bg: "userMessageBg" };
+					break;
+				case "assistant":
+					if (!unit.message.content.some((block) => block.type === "text" && block.text.trim()))
+						style = { fg: "thinkingText", italic: true };
+					break;
+				case "bashExecution":
+					style = { fg: unit.message.excludeFromContext ? "dim" : "bashMode", bold: true };
+					break;
+				case "custom":
+				case "compactionSummary":
+				case "branchSummary":
+					style = { fg: "customMessageLabel", bg: "customMessageBg", bold: true };
+					break;
+			}
+		}
+		if (failed) style.fg = "error";
 		this.prompt = prompt;
 		this.createBody = createBody;
 		this.onError = onError;
@@ -32,14 +66,15 @@ export class HistoricalEntryComponent extends Container {
 			{
 				render: (width) => {
 					if (cachedLines && cachedWidth === width) return cachedLines;
-					const text = truncateToWidth(
+					let text = truncateToWidth(
 						` ${this.expanded ? "▾" : "▸"} ${failed ? "[failed/aborted] " : ""}${plainLabel}`,
 						width,
 					);
+					if (style.bg) text += " ".repeat(Math.max(0, width - visibleWidth(text)));
 					cachedWidth = width;
 					cachedLines = [
 						(prompt ? "\x1b]133;A\x07" : "") +
-							theme.fg(failed ? "error" : "dim", text) +
+							theme.style(text, style) +
 							(prompt ? "\x1b]133;B\x07\x1b]133;C\x07" : ""),
 					];
 					return cachedLines;
