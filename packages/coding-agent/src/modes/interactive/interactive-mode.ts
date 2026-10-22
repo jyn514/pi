@@ -203,12 +203,7 @@ import {
 	theme,
 } from "./theme/theme.ts";
 import { InteractiveThemeController } from "./theme/theme-controller.ts";
-import {
-	collectTranscriptUnits,
-	type TranscriptUnit,
-	transcriptUnitFragments,
-	transcriptUnitPreview,
-} from "./transcript-history.ts";
+import { collectTranscriptUnits, type TranscriptUnit, transcriptUnitFragments } from "./transcript-history.ts";
 import { createInteractiveTui, createInteractiveTuiReference } from "./tui-renderer.ts";
 
 export { createInteractiveTui, createInteractiveTuiReference } from "./tui-renderer.ts";
@@ -4131,9 +4126,7 @@ export class InteractiveMode {
 			}
 			if (unit.kind === "usage" && !this.settingsManager.getShowCacheMissNotices()) continue;
 			const heading = new HistoricalEntryComponent(
-				transcriptUnitPreview(unit),
-				unit.failed,
-				unit.kind === "message" && (unit.message.role === "user" || unit.message.role === "assistant"),
+				unit,
 				() => customBody ?? this.createHistoricalBody(unit),
 				(error) =>
 					this.showError(

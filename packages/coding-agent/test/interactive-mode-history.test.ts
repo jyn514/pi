@@ -13,6 +13,7 @@ import {
 	TuiAltScreen,
 	VStack,
 } from "@earendil-works/pi-tui";
+import xterm from "@xterm/headless";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import type { AgentSessionEvent } from "../src/core/agent-session.ts";
@@ -39,6 +40,7 @@ interface HistoryHarness {
 	renderSessionEntries(entries: SessionEntry[], options?: { updateFooter?: boolean }): void;
 	rebuildTranscript(): void;
 	rebuildHistoricalPrefix(): void;
+	createHistoricalBody(unit: TranscriptUnit): Component;
 	createTranscriptSearchSource(): AltScreenSearchSource;
 	handleEvent(event: AgentSessionEvent): Promise<void>;
 	setToolsExpanded(expanded: boolean): void;
@@ -171,9 +173,98 @@ describe("lazy historical transcript", () => {
 		}
 	});
 
+	it.each(["dark", "light"])("keeps normal component colors on closed headings with the %s theme", async (name) => {
+		initTheme(name);
+		const { host, sessionManager, headings } = createHistory();
+		const first = sessionManager.appendMessage(userMsg("user text"));
+		sessionManager.appendMessage(assistantMsg("assistant text"));
+		sessionManager.appendMessage({
+			...assistantMsg(""),
+			content: [{ type: "thinking", thinking: "thinking text" }],
+		});
+		for (const [id, isError] of [
+			["success", false],
+			["error", true],
+		] as const) {
+			sessionManager.appendMessage(tool(id, "tool text"));
+			sessionManager.appendMessage({
+				role: "toolResult",
+				toolCallId: id,
+				toolName: "write",
+				content: [{ type: "text", text: "tool result" }],
+				isError,
+				timestamp: Date.now(),
+			});
+		}
+		sessionManager.appendMessage(tool("pending", "pending text"));
+		for (const excludeFromContext of [false, true]) {
+			sessionManager.appendMessage({
+				role: "bashExecution",
+				command: "echo text",
+				output: "text",
+				exitCode: 0,
+				cancelled: false,
+				truncated: false,
+				excludeFromContext,
+				timestamp: Date.now(),
+			});
+		}
+		sessionManager.appendCustomMessageEntry("notice", "custom text", true);
+		sessionManager.appendCompaction("earlier summary", first, 1);
+		host.renderSessionEntries(sessionManager.getBranch());
+		const units = collectTranscriptUnits(sessionManager.getBranch());
+		const normal = units.map((unit) => host.transcriptBindings.get(unit.id)!);
+		expect(normal.every(Boolean)).toBe(true);
+		sessionManager.appendCompaction("latest summary", first, 1);
+		host.rebuildTranscript();
+		expect(headings()).toHaveLength(normal.length);
+		const construct = vi.spyOn(host, "createHistoricalBody");
+		const colors = async (lines: string[]) => {
+			const terminal = new xterm.Terminal({ cols: 80, rows: 40, allowProposedApi: true });
+			try {
+				await new Promise<void>((resolve) => terminal.write(lines.join("\r\n"), resolve));
+				const buffer = terminal.buffer.active;
+				for (let row = 0; row < 40; row++) {
+					const line = buffer.getLine(buffer.viewportY + row);
+					if (!line) continue;
+					for (let col = 0; col < 80; col++) {
+						const cell = line.getCell(col);
+						if (!cell?.getChars().trim()) continue;
+						return {
+							fg: [cell.getFgColorMode(), cell.getFgColor(), cell.isDim()],
+							bg: [cell.getBgColorMode(), cell.getBgColor()],
+						};
+					}
+				}
+				throw new Error("No visible component text");
+			} finally {
+				terminal.dispose();
+			}
+		};
+		for (const width of [80, 12]) {
+			for (const [index, heading] of headings().entries()) {
+				const lines = heading.render(width);
+				expect(lines).toHaveLength(1);
+				expect(stripAnsi(lines[0])).toContain("▸");
+				const expected = await colors(normal[index].render(width));
+				const actual = await colors(lines);
+				expect(actual.bg, units[index].label).toEqual(expected.bg);
+				if (!units[index].failed) expect(actual.fg, units[index].label).toEqual(expected.fg);
+			}
+		}
+		expect(construct).not.toHaveBeenCalled();
+	});
+
 	it("reuses heading formatting until resize, expansion, or invalidation without constructing closed bodies", () => {
 		const body = vi.fn(() => new Text("opened body", 0, 0));
-		const heading = new HistoricalEntryComponent("long heading label", false, true, body, vi.fn(), vi.fn());
+		const session = SessionManager.inMemory();
+		session.appendMessage(userMsg("long heading label"));
+		const heading = new HistoricalEntryComponent(
+			collectTranscriptUnits(session.getBranch())[0],
+			body,
+			vi.fn(),
+			vi.fn(),
+		);
 		const label = heading.children[0];
 		const original = label.render(80);
 		expect(label.render(80)).toBe(original);
@@ -185,7 +276,7 @@ describe("lazy historical transcript", () => {
 		expect(label.render(9)).not.toBe(narrow);
 		expect(body).not.toHaveBeenCalled();
 		heading.setExpanded(true);
-		expect(stripAnsi(heading.render(80).join("\n"))).toContain("▾ long heading label");
+		expect(stripAnsi(heading.render(80).join("\n"))).toContain("▾ You: long heading label");
 		expect(body).toHaveBeenCalledOnce();
 	});
 

@@ -17,6 +17,7 @@
 
 ### Fixed
 
+- Keep normal message colors and tool-status backgrounds on collapsed historical headings instead of dimming the entire older transcript.
 - Fixed pending-input loss after recording or deferred-preflight failures, overlapping prompts falsely reporting started, and handoff observer failures invalidating captured work.
 - Fixed standalone Bun builds failing bytecode generation for extension aliases by compiling ES module bytecode.
 - Fixed native text reads allocating entire files before offset and output limits were applied, including oversized single lines.

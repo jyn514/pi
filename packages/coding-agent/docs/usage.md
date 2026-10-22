@@ -36,6 +36,7 @@ Pi does not ask before every tool call. Review commands and changed files, and u
 
 The transcript shows the whole selected branch in chronological order.
 Messages before its latest compaction appear as collapsed headings, including messages retained in the model's current context.
+Collapsed headings retain normal message colors and tool-status backgrounds.
 The latest compaction summary and later messages use the normal view.
 Without a compaction, the normal view is unchanged.
 This does not change what is sent to the model.
