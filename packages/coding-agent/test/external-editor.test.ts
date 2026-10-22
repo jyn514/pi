@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { type ExternalEditorResult, editInExternalEditor } from "../src/modes/interactive/external-editor.ts";
 
 const editorFixturePath = fileURLToPath(new URL("./fixtures/fake-external-editor.mjs", import.meta.url));
@@ -14,7 +14,10 @@ interface EditorCapture {
 	directoryMode: number;
 }
 
-async function runExternalEditor(fixtureFlag?: "--fail" | "--empty"): Promise<{
+async function runExternalEditor(
+	fixtureFlag?: "--fail" | "--empty",
+	usesTerminal?: boolean,
+): Promise<{
 	result: ExternalEditorResult;
 	capture: EditorCapture;
 }> {
@@ -24,6 +27,7 @@ async function runExternalEditor(fixtureFlag?: "--fail" | "--empty"): Promise<{
 		const result = await editInExternalEditor({
 			command: `${process.execPath} ${editorFixturePath} ${capturePath}${fixtureFlag ? ` ${fixtureFlag}` : ""}`,
 			content: "original",
+			usesTerminal,
 		});
 		const capture = JSON.parse(readFileSync(capturePath, "utf-8")) as EditorCapture;
 		return { result, capture };
@@ -59,5 +63,17 @@ describe("editInExternalEditor", () => {
 		const { result } = await runExternalEditor("--empty");
 
 		expect(result).toEqual({ status: "complete", content: "" });
+	});
+
+	it("runs without using or writing to Pi's terminal when configured", async () => {
+		const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+		try {
+			const { result } = await runExternalEditor(undefined, false);
+
+			expect(result).toEqual({ status: "complete", content: "edited" });
+			expect(stdoutWrite).not.toHaveBeenCalled();
+		} finally {
+			stdoutWrite.mockRestore();
+		}
 	});
 });

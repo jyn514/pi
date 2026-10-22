@@ -475,6 +475,13 @@ describe("SettingsManager", () => {
 			Object.defineProperty(process, "platform", { value: "linux" });
 			expect(SettingsManager.inMemory().getExternalEditorCommand()).toBe("nano");
 		});
+
+		it("should use Pi's terminal for external editors by default", () => {
+			expect(SettingsManager.inMemory().getExternalEditorUsesTerminal()).toBe(true);
+			expect(SettingsManager.inMemory({ externalEditorUsesTerminal: false }).getExternalEditorUsesTerminal()).toBe(
+				false,
+			);
+		});
 	});
 
 	describe("TUI mode", () => {

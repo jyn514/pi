@@ -7,6 +7,7 @@ import { stripBom } from "../../utils/text.ts";
 export interface ExternalEditorOptions {
 	command: string;
 	content: string;
+	usesTerminal?: boolean;
 }
 
 export type ExternalEditorResult = { status: "complete"; content: string } | { status: "failed" };
@@ -17,14 +18,17 @@ export async function editInExternalEditor(options: ExternalEditorOptions): Prom
 	try {
 		writeFileSync(filePath, options.content, "utf-8");
 		const [editor, ...editorArgs] = options.command.split(" ");
-		process.stdout.write(`Launching external editor: ${options.command}\nPi will resume when the editor exits.\n`);
+		const usesTerminal = options.usesTerminal ?? true;
+		if (usesTerminal) {
+			process.stdout.write(`Launching external editor: ${options.command}\nPi will resume when the editor exits.\n`);
+		}
 
 		// Do not use spawnSync here. On Windows, synchronous child_process calls can keep
 		// Node/libuv's console input read active after the parent pauses stdin, racing
 		// vim/nvim for the console input buffer until Ctrl+C cancels the pending read.
 		const exitCode = await new Promise<number | null>((resolve) => {
 			const child = spawn(editor, [...editorArgs, filePath], {
-				stdio: "inherit",
+				stdio: usesTerminal ? "inherit" : "ignore",
 				shell: process.platform === "win32",
 			});
 			child.on("error", () => resolve(null));

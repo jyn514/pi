@@ -252,6 +252,13 @@ export const SettingsSchema = Type.Object(
 		externalEditor: Type.Optional(
 			Type.String({ description: "Command for Ctrl+G external editor; takes precedence over VISUAL and EDITOR." }),
 		),
+		externalEditorUsesTerminal: Type.Optional(
+			Type.Boolean({
+				description:
+					"Whether the Ctrl+G external editor uses Pi's terminal. Set false for editors opened in another window or pane.",
+				default: true,
+			}),
+		),
 		shellPath: Type.Optional(
 			Type.String({
 				description: "Custom shell path, for example for Cygwin on Windows, with support for leading ~ expansion.",

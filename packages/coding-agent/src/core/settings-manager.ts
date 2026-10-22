@@ -970,6 +970,10 @@ export class SettingsManager {
 		return process.platform === "win32" ? "notepad" : "nano";
 	}
 
+	getExternalEditorUsesTerminal(): boolean {
+		return this.settings.externalEditorUsesTerminal ?? true;
+	}
+
 	setHideThinkingBlock(hide: boolean): void {
 		this.globalSettings.hideThinkingBlock = hide;
 		this.markModified("hideThinkingBlock");
