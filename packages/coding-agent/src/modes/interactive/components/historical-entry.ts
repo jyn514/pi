@@ -1,4 +1,5 @@
 import { type Component, Container, MouseRegion, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { stripAnsi } from "../../../utils/ansi.ts";
 import { type ThemeStyle, theme } from "../theme/theme.ts";
 import { type TranscriptUnit, transcriptUnitPreview } from "../transcript-history.ts";
 
@@ -18,11 +19,28 @@ export class HistoricalEntryComponent extends Container {
 		createBody: () => Component,
 		onError: (error: unknown) => void,
 		requestRender: () => void,
+		historicalPreview?: Component,
 	) {
 		super();
 		const plainLabel = transcriptUnitPreview(unit)
 			.slice(0, 160)
 			.replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
+		let argumentPreview = "";
+		if (unit.kind === "tool") {
+			// Read a bounded common argument, never full argument serialization or a tool renderer.
+			for (const key of ["file_path", "path", "command"]) {
+				const value = unit.call.arguments[key];
+				if (typeof value !== "string") continue;
+				argumentPreview = value
+					.slice(0, 120)
+					.replace(/[\x00-\x1f\x7f-\x9f]/g, " ")
+					.trim();
+				if (argumentPreview) {
+					if (value.length > 120) argumentPreview += "…";
+					break;
+				}
+			}
+		}
 		const failed = unit.failed;
 		const prompt = unit.kind === "message" && (unit.message.role === "user" || unit.message.role === "assistant");
 		let style: ThemeStyle = {};
@@ -30,7 +48,6 @@ export class HistoricalEntryComponent extends Container {
 			style = {
 				fg: "toolTitle",
 				bg: failed ? "toolErrorBg" : unit.result ? "toolSuccessBg" : "toolPendingBg",
-				bold: true,
 			};
 		} else if (unit.kind === "custom") {
 			style = { fg: "customMessageLabel", bg: "customMessageBg", bold: true };
@@ -66,11 +83,36 @@ export class HistoricalEntryComponent extends Container {
 			{
 				render: (width) => {
 					if (cachedLines && cachedWidth === width) return cachedLines;
-					let text = truncateToWidth(
-						` ${this.expanded ? "▾" : "▸"} ${failed ? "[failed/aborted] " : ""}${plainLabel}`,
-						width,
-					);
-					if (style.bg) text += " ".repeat(Math.max(0, width - visibleWidth(text)));
+					const marker = ` ${this.expanded ? "▾" : "▸"} `;
+					const markerWidth = visibleWidth(marker);
+					if (historicalPreview && width > markerWidth) {
+						try {
+							const line = historicalPreview.render(width - markerWidth)[0];
+							if (line && stripAnsi(line).trim()) {
+								cachedWidth = width;
+								cachedLines = [
+									theme.fg("customMessageLabel", marker) + truncateToWidth(line, width - markerWidth),
+								];
+								return cachedLines;
+							}
+						} catch {
+							// Match normal custom-message fallback behavior without retrying a broken preview.
+							historicalPreview = undefined;
+						}
+					}
+					const title = `${failed ? "[failed/aborted] " : ""}${plainLabel}`;
+					const label = `${title}${argumentPreview ? ` ${argumentPreview}` : ""}`;
+					// Keep ANSI and the non-ASCII marker out of ordinary label truncation's ASCII fast path.
+					let text =
+						width >= markerWidth + 3
+							? marker + truncateToWidth(label, width - markerWidth, "...", !!style.bg)
+							: truncateToWidth(marker + label, width, "...", !!style.bg);
+					if (unit.kind === "tool") {
+						text = stripAnsi(text);
+						const titleEnd = marker.length + title.length;
+						text =
+							theme.style(text.slice(0, titleEnd), { bold: true }) + theme.fg("accent", text.slice(titleEnd));
+					}
 					cachedWidth = width;
 					cachedLines = [
 						(prompt ? "\x1b]133;A\x07" : "") +
@@ -82,6 +124,11 @@ export class HistoricalEntryComponent extends Container {
 				invalidate: () => {
 					cachedWidth = undefined;
 					cachedLines = undefined;
+					try {
+						historicalPreview?.invalidate();
+					} catch {
+						historicalPreview = undefined;
+					}
 				},
 			},
 			(event) => {
