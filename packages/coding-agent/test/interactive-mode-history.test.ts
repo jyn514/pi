@@ -838,7 +838,7 @@ describe("lazy historical transcript", () => {
 		const source = host.createTranscriptSearchSource();
 		expect(source.snapshot().flatMap((unit) => unit.fragments)).toContain("write body\nreal newline");
 		expect(construct).not.toHaveBeenCalled();
-		expect(text()).toContain("[failed/aborted] write");
+		expect(text()).toContain("[error] write");
 		headings()[1].setExpanded(true);
 		text();
 		expect(construct).toHaveBeenCalledOnce();
