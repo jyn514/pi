@@ -1131,13 +1131,7 @@ export class InteractiveMode {
 		]);
 		this.fdPath = fdPath;
 
-		// Enable the remaining input handlers only after managed-tool setup completes.
-		this.setupKeyHandlers();
-		this.setupEditorSubmitHandler();
-		this.ui.requestRender();
-
-		// Initialize extensions first so resources are shown before messages
-		await this.rebindCurrentSession();
+		await this.enableInputAfterSessionStart();
 
 		// Render initial messages AFTER showing loaded resources
 		this.renderInitialMessages();
@@ -2244,6 +2238,14 @@ export class InteractiveMode {
 		this.updateTerminalTitle();
 	}
 
+	private async enableInputAfterSessionStart(): Promise<void> {
+		// rebindCurrentSession awaits session_start handlers, including interactive extension dialogs.
+		await this.rebindCurrentSession();
+		this.setupKeyHandlers();
+		this.setupEditorSubmitHandler();
+		this.ui.requestRender();
+	}
+
 	private async handleFatalRuntimeError(prefix: string, error: unknown): Promise<never> {
 		const message = error instanceof Error ? error.message : String(error);
 		this.showError(`${prefix}: ${message}`);
@@ -3299,7 +3301,7 @@ export class InteractiveMode {
 
 	private handleStartupSubmit(text: string): void {
 		this.editor.setText(text);
-		this.showStatus("Startup is still in progress");
+		this.showStatus("Startup is still in progress; waiting for extensions");
 	}
 
 	private setupEditorSubmitHandler(): void {

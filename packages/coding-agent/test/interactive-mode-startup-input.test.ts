@@ -28,7 +28,15 @@ type StartupSubmitContext = {
 	showStatus: (message: string) => void;
 };
 
+type StartupActivationContext = {
+	rebindCurrentSession: () => Promise<void>;
+	setupKeyHandlers: () => void;
+	setupEditorSubmitHandler: () => void;
+	ui: { requestRender: () => void };
+};
+
 type InteractiveModePrivate = {
+	enableInputAfterSessionStart(this: StartupActivationContext): Promise<void>;
 	handleStartupSubmit(this: StartupSubmitContext, text: string): void;
 	setupEditorSubmitHandler(this: SubmitContext): void;
 	getUserInput(this: InputContext): Promise<string>;
@@ -55,6 +63,32 @@ function createSubmitContext(): SubmitContext {
 }
 
 describe("InteractiveMode startup input", () => {
+	it("keeps normal input disabled until session_start extension work completes", async () => {
+		let finishSessionStart: (() => void) | undefined;
+		const sessionStart = new Promise<void>((resolve) => {
+			finishSessionStart = resolve;
+		});
+		const context: StartupActivationContext = {
+			rebindCurrentSession: vi.fn(() => sessionStart),
+			setupKeyHandlers: vi.fn(),
+			setupEditorSubmitHandler: vi.fn(),
+			ui: { requestRender: vi.fn() },
+		};
+
+		const activation = interactiveModePrototype.enableInputAfterSessionStart.call(context);
+		await Promise.resolve();
+
+		expect(context.setupKeyHandlers).not.toHaveBeenCalled();
+		expect(context.setupEditorSubmitHandler).not.toHaveBeenCalled();
+
+		finishSessionStart?.();
+		await activation;
+
+		expect(context.setupKeyHandlers).toHaveBeenCalledTimes(1);
+		expect(context.setupEditorSubmitHandler).toHaveBeenCalledTimes(1);
+		expect(context.ui.requestRender).toHaveBeenCalledTimes(1);
+	});
+
 	it("restores a prompt submitted while managed-tool setup is running", () => {
 		const context: StartupSubmitContext = {
 			editor: { setText: vi.fn() },
@@ -64,7 +98,7 @@ describe("InteractiveMode startup input", () => {
 		interactiveModePrototype.handleStartupSubmit.call(context, "early prompt");
 
 		expect(context.editor.setText).toHaveBeenCalledWith("early prompt");
-		expect(context.showStatus).toHaveBeenCalledWith("Startup is still in progress");
+		expect(context.showStatus).toHaveBeenCalledWith("Startup is still in progress; waiting for extensions");
 	});
 
 	it("queues a normal prompt submitted before the input callback is installed", async () => {
