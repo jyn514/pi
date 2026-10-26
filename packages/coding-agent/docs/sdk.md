@@ -35,6 +35,9 @@ Read current state through `session.messages`, `session.model`, `session.thinkin
 
 ### Session storage
 
+For session files and model-context conversion without the agent or interactive UI, import `SessionManager`, `CURRENT_SESSION_VERSION`, and `convertToLlm` from `@earendil-works/pi-coding-agent/session`.
+This entry uses the same session loading, migration, branch selection, and compaction behavior as the root SDK.
+
 Sessions are persistent by default. `SessionManager` owns the persisted or in-memory entry tree and tracks its active leaf. Branching changes that leaf without deleting abandoned branches. When Pi reconstructs model context, the manager selects the active branch and applies compaction.
 
 `SessionManager` is authoritative for finalized model context. Restore external history by constructing the session with a manager containing those entries. Assigning `session.agent.state.messages` does not replace persisted context.

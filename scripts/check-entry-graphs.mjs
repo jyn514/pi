@@ -39,6 +39,12 @@ const BUDGETS = {
 		// The format checks (vendored from TypeBox, about 40 KB) load only through ./formats.
 		".": { maxFiles: 10, forbid: ["schema/src/formats/"] },
 	},
+	"packages/coding-agent": {
+		"./session": {
+			maxFiles: 100,
+			forbid: ["packages/tui/", "coding-agent/src/modes/", "coding-agent/src/index.ts", "core/agent-session.ts"],
+		},
+	},
 	"packages/ai": {
 		"./models": {
 			// Request telemetry reaches pi-ai's telemetry.ts and pi-telemetry's root (index, noop, metrics, memory).

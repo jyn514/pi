@@ -18,6 +18,10 @@
 		},
 		"./rpc-entry": {
 			"import": "./dist/bundle/rpc-entry.js"
+		},
+		"./session": {
+			"types": "./dist/session.d.ts",
+			"import": "./dist/session.js"
 		}
 	},
 	"files": [
