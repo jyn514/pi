@@ -65,6 +65,8 @@ Binding for Chord v2 (`packages/chord/src/`) and its tests, when writing and whe
 
 ## Dependency and Install Security
 
+- Before validation, run `npm ls --workspaces --include-workspace-root --depth=0` from the repository root.
+  If it reports missing or invalid dependencies, repair the install using the commands in this section and rerun the dependency check before interpreting validation failures.
 - Treat npm dep and lockfile changes as reviewed code. Direct registry deps, including internal workspace deps, stay pinned to exact versions.
 - When updating `undici`, you MUST read its changelog/release notes for the target version and evaluate whether any changes may affect functionality before applying the update.
 - Hydrate/update locally with `npm install --ignore-scripts`; clean/CI-style with `npm ci --ignore-scripts`. Don't run lifecycle scripts unless the user asks.
