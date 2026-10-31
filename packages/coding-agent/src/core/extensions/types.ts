@@ -421,6 +421,14 @@ export interface ExtensionToolContext extends ExtensionContext {
 	 * errors come back as `isError: true`.
 	 */
 	executeTool(name: string, args: unknown, options?: ExecuteToolOptions): Promise<AgentToolCallOutcome>;
+	/** Queue assistant text for delivery after the enclosing model-issued tool call completes successfully. */
+	sendCommentary(message: string): void;
+	/**
+	 * Queue final assistant text and end the tool loop at its completed-tool boundary.
+	 * An empty string ends silently. Does not cancel the script or sibling calls; a failed or aborted
+	 * enclosing call discards the request. Normal extension continuations and queued inputs still apply.
+	 */
+	finishTurn(message: string): void;
 }
 
 /**
@@ -2339,6 +2347,8 @@ export interface ExtensionContextActions {
 		args: unknown,
 		options: ExecuteToolOptions,
 	) => Promise<AgentToolCallOutcome>;
+	/** Backs the tool context's boundary-delivered assistant output methods. */
+	queueAssistantOutput?: (toolCallId: string, message: string, finish: boolean, signal?: AbortSignal) => void;
 	/** Backs `ExtensionToolContext.tools`. */
 	getCallableTools?: () => readonly AgentTool[];
 }

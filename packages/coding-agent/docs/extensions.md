@@ -2848,6 +2848,32 @@ export default function (pi: ExtensionAPI) {
 
 When `search_tools` adds a match, the model receives the complete updated tool list on the immediately following request.
 
+### Assistant output from tools
+
+Use `ctx.sendCommentary(message)` or `ctx.finishTurn(message)` inside a tool's `execute()` to stage native assistant output.
+Pi delivers it at the completed outer tool boundary, not as a custom message, user message, or tool-result text.
+A nested call, including one made from codemode, stages output for its enclosing outer tool call.
+Return a small acknowledgement from the tool rather than copying the assistant message into its result.
+
+The UI and stored session show this output after the outer tool result.
+For provider replay, Pi includes commentary text in the assistant message that called that tool, before the tool results, rather than sending a trailing assistant prefill.
+Only commentary is tagged with its originating tool call and kept with that caller across compaction boundaries.
+Final messages remain ordinary assistant messages after the tool results, including during replay.
+All output keeps its assistant role, and replay does not mutate stored messages.
+Delivery makes no additional provider call and adds zero provider usage; later requests count replayed text as normal input.
+
+`sendCommentary()` stages commentary without ending the turn.
+`finishTurn()` stages a final assistant message and suppresses the automatic model follow-up when the outer execution succeeds.
+Pass an empty string to `finishTurn()` to stop silently.
+Neither method cancels a running script or sibling tool calls.
+Failed or aborted outer execution discards both staged commentary and the finish request, including its final message.
+After a final message, new user input or an extension continuation with valid runnable context can start another model request.
+
+The CLI's built-in `assistant-output` extension registers ordinary `send_commentary({ message })` and `finish_turn({ message })` tools for these operations.
+Both start inactive, but their `codemode` exposure keeps them callable from scripts without activation.
+Activate them with `--tools`, `defaultTools`, or `pi.setActiveTools()` to declare them directly to the model.
+SDK hosts add [`createAssistantOutputExtension()`](sdk.md#assistant-output) to their extension factories.
+
 ### Tool Exposure
 
 `exposure` controls how the model reaches a tool. "Callable" means callable from other tools through `ctx.executeTool()` (`ctx.tools`), as the `codemode` tool's scripts do:

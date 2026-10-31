@@ -1121,17 +1121,21 @@ describe("agentLoop with AgentMessage", () => {
 			},
 		};
 		const ordering: string[] = [];
+		const appended = createAssistantMessage([{ type: "text", text: "Tool work is complete." }]);
 		const config: AgentLoopConfig = {
 			model: createModel(),
 			convertToLlm: identityConverter,
-			finishTurn: ({ context, toolResults }) => {
+			finishTurn: async ({ context, toolResults, newMessages, appendMessage }) => {
 				ordering.push("finishTurn");
 				expect(toolResults).toHaveLength(1);
 				expect(context.messages.at(-1)?.role).toBe("toolResult");
+				await appendMessage(appended);
+				expect(context.messages.at(-1)).toBe(appended);
+				expect(newMessages.at(-1)).toBe(appended);
 			},
 		};
 
-		await runAgentLoop(
+		const result = await runAgentLoop(
 			[createUserMessage("echo")],
 			{ messages: [], tools: [tool] },
 			config,
@@ -1156,7 +1160,8 @@ describe("agentLoop with AgentMessage", () => {
 			},
 		);
 
-		expect(ordering.slice(-3)).toEqual(["message_end:toolResult", "finishTurn", "turn_end"]);
+		expect(ordering.slice(-4)).toEqual(["message_end:toolResult", "finishTurn", "message_end:assistant", "turn_end"]);
+		expect(result.at(-1)).toBe(appended);
 	});
 
 	it.each(["error", "aborted"] as const)(

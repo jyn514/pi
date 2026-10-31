@@ -26,6 +26,7 @@ import {
 	type AgentState,
 	type AgentTool,
 	type AgentToolCallOutcome,
+	type AgentTurnContext,
 	type BeforeToolCallContext,
 	type BeforeToolCallResult,
 	type PrepareNextTurnContext,
@@ -118,7 +119,12 @@ import {
 } from "./extensions/index.ts";
 import { type BeforeAgentStartTrigger, emitSessionShutdownEvent } from "./extensions/runner.ts";
 import { createToolNameMatcher, isMcpToolName } from "./mcp-servers.ts";
-import { type BashExecutionMessage, type CustomMessage, convertToLlm } from "./messages.ts";
+import {
+	type AssistantOutputMessage,
+	type BashExecutionMessage,
+	type CustomMessage,
+	convertToLlm,
+} from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { NestedToolCallRunner } from "./nested-tool-calls.ts";
@@ -547,6 +553,7 @@ export class AgentSession {
 	private _toolRegistry: Map<string, AgentTool> = new Map();
 	/** Created on the first `ctx.executeTool()` call. */
 	private _nestedToolCalls: NestedToolCallRunner | undefined;
+	private _pendingAssistantOutput: Array<{ toolCallId: string; message: string; finish: boolean }> = [];
 	/** Declared tools whose declarations requests leave out, from `prepareLoadout` hooks. */
 	private _hiddenDeclarations: ReadonlySet<string> = new Set();
 	private _toolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
@@ -814,7 +821,7 @@ export class AgentSession {
 		this._nestedToolCalls ??= new NestedToolCallRunner({
 			getTools: () => this._getCallableTools(),
 			isSequential: () => this.agent.toolExecution === "sequential",
-			runToolCall: (toolCall, parentId, signal, onUpdate) => {
+			runToolCall: async (toolCall, parentId, signal, onUpdate) => {
 				const assistantMessage = this._findLastAssistantMessage();
 				if (!assistantMessage) {
 					return Promise.resolve({
@@ -823,7 +830,7 @@ export class AgentSession {
 						isError: true,
 					});
 				}
-				return runToolCall(toolCall, {
+				const outcome = await runToolCall(toolCall, {
 					tools: this._getCallableTools(),
 					assistantMessage,
 					context: { messages: this.agent.state.messages, tools: this.agent.state.tools },
@@ -832,6 +839,12 @@ export class AgentSession {
 					signal,
 					onUpdate,
 				});
+				if (outcome.isError) {
+					this._pendingAssistantOutput = this._pendingAssistantOutput.filter(
+						(output) => output.toolCallId !== toolCall.id && !output.toolCallId.startsWith(`${toolCall.id}/`),
+					);
+				}
+				return outcome;
 			},
 			emit: async (event) => {
 				await this._extensionRunner.emit(event);
@@ -969,9 +982,63 @@ export class AgentSession {
 		return boundary.continue;
 	}
 
+	private _queueAssistantOutput(toolCallId: string, message: string, finish: boolean, signal?: AbortSignal): void {
+		signal?.throwIfAborted();
+		const assistantMessage = this._findLastAssistantMessage();
+		if (
+			!this.isStreaming ||
+			!assistantMessage?.content.some(
+				(block) => block.type === "toolCall" && (block.id === toolCallId || toolCallId.startsWith(`${block.id}/`)),
+			)
+		) {
+			throw new Error("Assistant output requires an active tool call");
+		}
+		this._pendingAssistantOutput.push({ toolCallId, message, finish });
+	}
+
+	private async _flushAssistantOutput(turn: AgentTurnContext, signal?: AbortSignal): Promise<boolean> {
+		const pending = this._pendingAssistantOutput;
+		this._pendingAssistantOutput = [];
+		if (signal?.aborted) return false;
+		let finish = false;
+		for (const output of pending) {
+			const result = turn.toolResults.find(
+				(result) =>
+					result.toolCallId === output.toolCallId || output.toolCallId.startsWith(`${result.toolCallId}/`),
+			);
+			if (!result || result.isError) continue;
+			if (output.message !== "") {
+				const message: AssistantMessage = {
+					role: "assistant",
+					content: [{ type: "text", text: output.message }],
+					api: turn.message.api,
+					provider: turn.message.provider,
+					model: turn.message.model,
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "stop",
+					timestamp: Date.now(),
+				};
+				const delivered: AssistantMessage | AssistantOutputMessage = output.finish
+					? message
+					: { ...message, outputFromToolCallId: result.toolCallId };
+				await turn.appendMessage(delivered);
+			}
+			finish ||= output.finish;
+		}
+		return finish;
+	}
+
 	private _installAgentBoundaryHooks(): void {
 		const previousFinishTurn = this.agent.finishTurn;
 		this.agent.finishTurn = async (turn, signal) => {
+			const finish = await this._flushAssistantOutput(turn, signal);
 			this._boundaryDispatchedMessages.add(turn.message);
 			const extensionContinue = await this._dispatchTurnEndBoundary(turn.message, turn.toolResults);
 			const previousDecision = await previousFinishTurn?.(turn, signal);
@@ -979,6 +1046,7 @@ export class AgentSession {
 			if (signal?.aborted) return { action: "end" };
 			if (previousDecision?.action === "end") return previousDecision;
 			if (extensionContinue || previousDecision?.action === "continue") return { action: "continue" };
+			if (finish) return { action: "end" };
 			return undefined;
 		};
 	}
@@ -1092,8 +1160,13 @@ export class AgentSession {
 		const pendingMessages = this._getPendingBoundaryMessages();
 		const llmMessages = convertToLlm(projection.messages);
 		const finalRole = llmMessages[llmMessages.length - 1]?.role;
+		const finalContextRole = projection.messages.at(-1)?.role;
 		const hasNonSystemContext = llmMessages.some((message) => message.role !== "system");
-		const contextCanContinue = hasNonSystemContext && finalRole !== "assistant";
+		// A fresh Agent.continue() also checks the unconverted transcript's final role.
+		const contextCanContinue =
+			hasNonSystemContext &&
+			finalRole !== "assistant" &&
+			(boundary === "turn_end" || finalContextRole !== "assistant");
 		const pendingCustomContext = this._pendingCustomMessages.length > 0;
 		return {
 			contextEntries: projection.entries,
@@ -1105,7 +1178,7 @@ export class AgentSession {
 				pendingCustomContext ||
 				(boundary === "turn_end"
 					? this.agent.hasQueuedMessages()
-					: finalRole === "assistant" && this.agent.hasQueuedMessages()),
+					: finalContextRole === "assistant" && this.agent.hasQueuedMessages()),
 		};
 	}
 
@@ -1274,6 +1347,7 @@ export class AgentSession {
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = async (event: AgentEvent): Promise<void> => {
+		if (event.type === "agent_end") this._pendingAssistantOutput = [];
 		// An abort requested while the run was starting, e.g. during before_agent_start, stops it
 		// here. agent_start is awaited before the first request.
 		if (event.type === "agent_start" && this._agentRunAbortRequested) this.agent.abort();
@@ -4257,6 +4331,8 @@ export class AgentSession {
 				resolveSkillCommand: (text) => this.resolveSkillCommand(text),
 				getSystemPromptOptions: () => this._baseSystemPromptOptions,
 				executeTool: (callerId, name, args, options) => this._executeNestedToolCall(callerId, name, args, options),
+				queueAssistantOutput: (toolCallId, message, finish, signal) =>
+					this._queueAssistantOutput(toolCallId, message, finish, signal),
 				getCallableTools: () => this._getCallableTools(),
 			},
 			{

@@ -186,6 +186,12 @@ async function runLoop(
 	let config = initialConfig;
 	let lastCompletedTurn: PrepareNextTurnContext | undefined;
 	let explicitContinuation = false;
+	const appendMessage = async (message: AssistantMessage): Promise<void> => {
+		await emit({ type: "message_start", message });
+		currentContext.messages.push(message);
+		newMessages.push(message);
+		await emit({ type: "message_end", message });
+	};
 	// Check for steering messages at start (user may have typed while waiting)
 	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
 
@@ -262,6 +268,7 @@ async function runLoop(
 					toolResults: [],
 					context: currentContext,
 					newMessages,
+					appendMessage,
 				};
 				await config.finishTurn?.(lastCompletedTurn, signal);
 				await emit({ type: "turn_end", message, toolResults: [] });
@@ -296,6 +303,7 @@ async function runLoop(
 				toolResults,
 				context: currentContext,
 				newMessages,
+				appendMessage,
 			};
 			const decision = await config.finishTurn?.(lastCompletedTurn, signal);
 			await emit({ type: "turn_end", message, toolResults });

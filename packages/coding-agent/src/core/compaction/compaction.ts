@@ -24,7 +24,7 @@ import type {
 	Usage,
 } from "@earendil-works/pi-ai/compat";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
-import { convertToLlm } from "../messages.ts";
+import { convertToLlm, isAssistantOutputMessage } from "../messages.ts";
 import {
 	buildSessionProjection,
 	type CompactionEntry,
@@ -349,6 +349,8 @@ export function estimateTokens(message: AgentMessage): number {
 }
 
 function isCutPointMessage(message: AgentMessage): boolean {
+	// Tool-issued output needs its caller for provider replay, just as a tool result does.
+	if (isAssistantOutputMessage(message)) return false;
 	switch (message.role) {
 		case "user":
 		case "assistant":

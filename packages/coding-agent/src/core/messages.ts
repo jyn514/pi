@@ -6,7 +6,7 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Message, TextContent } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ImageContent, Message, TextContent } from "@earendil-works/pi-ai";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
@@ -37,6 +37,19 @@ export interface BashExecutionMessage {
 	timestamp: number;
 	/** If true, this message is excluded from LLM context (!! prefix) */
 	excludeFromContext?: boolean;
+}
+
+/** Tool-issued commentary; the source call controls its provider replay placement. */
+export interface AssistantOutputMessage extends AssistantMessage {
+	outputFromToolCallId: string;
+}
+
+export function isAssistantOutputMessage(message: AgentMessage): message is AssistantOutputMessage {
+	return (
+		message.role === "assistant" &&
+		"outputFromToolCallId" in message &&
+		typeof message.outputFromToolCallId === "string"
+	);
 }
 
 /**
@@ -146,7 +159,7 @@ export function createCustomMessage(
  * - Custom extensions and tools
  */
 export function convertToLlm(messages: AgentMessage[]): Message[] {
-	return messages
+	const converted = messages
 		.map((m): Message | undefined => {
 			switch (m.role) {
 				case "bashExecution":
@@ -193,4 +206,31 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 			}
 		})
 		.filter((m) => m !== undefined);
+
+	// A request ending in standalone assistant text is an unsupported prefill on some providers.
+	// Keep native output in display/history order, but replay it with its tool-calling assistant message.
+	const replay: Message[] = [];
+	const callers = new Map<string, number>();
+	for (const message of converted) {
+		if (message.role === "assistant") {
+			if (isAssistantOutputMessage(message)) {
+				const { outputFromToolCallId, ...output } = message;
+				const callerIndex = callers.get(outputFromToolCallId);
+				if (callerIndex !== undefined) {
+					const caller = replay[callerIndex];
+					if (caller.role === "assistant") {
+						replay[callerIndex] = { ...caller, content: [...caller.content, ...output.content] };
+						continue;
+					}
+				}
+				replay.push(output);
+				continue;
+			}
+			for (const block of message.content) {
+				if (block.type === "toolCall") callers.set(block.id, replay.length);
+			}
+		}
+		replay.push(message);
+	}
+	return replay;
 }

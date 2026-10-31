@@ -400,6 +400,7 @@ export class ExtensionRunner {
 	private getSystemPromptOptionsFn: () => BuildSystemPromptOptions = () =>
 		normalizeBuildSystemPromptOptions({ cwd: this.cwd });
 	private executeToolFn: ExtensionContextActions["executeTool"];
+	private queueAssistantOutputFn: ExtensionContextActions["queueAssistantOutput"];
 	private getCallableToolsFn: () => readonly AgentTool[] = () => [];
 	/** Registered MCP servers already reported as unhandled. */
 	private readonly reportedMcpServers = new Set<string>();
@@ -477,6 +478,7 @@ export class ExtensionRunner {
 		this.resolveSkillCommandFn = contextActions.resolveSkillCommand ?? (() => undefined);
 		this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
 		this.executeToolFn = contextActions.executeTool;
+		this.queueAssistantOutputFn = contextActions.queueAssistantOutput;
 		this.getCallableToolsFn = contextActions.getCallableTools ?? (() => []);
 
 		// Servers registered from now on reach the extension that connects them right away. Servers
@@ -1038,8 +1040,15 @@ export class ExtensionRunner {
 	 */
 	createToolContext(toolCallId: string, signal: AbortSignal | undefined): ExtensionToolContext {
 		const runner = this;
+		const queueAssistantOutput = (message: string, finish: boolean) => {
+			runner.assertActive();
+			if (!runner.queueAssistantOutputFn) throw new Error("Assistant output is not available in this context");
+			runner.queueAssistantOutputFn(toolCallId, message, finish, signal);
+		};
 		// createContext() returns a fresh object, so adding properties does not affect other contexts.
 		return Object.defineProperties(this.createContext() as ExtensionToolContext, {
+			sendCommentary: { value: (message: string) => queueAssistantOutput(message, false) },
+			finishTurn: { value: (message: string) => queueAssistantOutput(message, true) },
 			tools: {
 				get() {
 					runner.assertActive();

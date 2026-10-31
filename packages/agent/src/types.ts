@@ -141,6 +141,11 @@ export interface AgentTurnContext {
 	context: AgentContext;
 	/** Messages that this loop invocation will return if it exits at this point. Prompt runs include the initial prompt messages; continuation runs do not include pre-existing context messages. */
 	newMessages: AgentMessage[];
+	/**
+	 * Append assistant output after this turn's tool results, with normal message lifecycle events.
+	 * Only call and await this method inside `finishTurn`; it does not request another provider response.
+	 */
+	appendMessage(message: AssistantMessage): Promise<void>;
 }
 
 /** Decision returned by {@link FinishTurn}. Returning undefined preserves normal scheduling. */

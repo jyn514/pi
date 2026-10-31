@@ -51,6 +51,25 @@ The `codemode` description lists tools with their TypeScript declarations, group
 
 While `codemode` is active, `codemode.mode` in [settings](settings.md#tools) decides how the other tools are presented. With `on` (default) declared tools stay declared, and their descriptions say how to call them from scripts. With `only` they are hidden from the model and listed in the `codemode` description instead, so the model calls them through scripts. Tool declarations in the `codemode` description, `describeTool()`, and `ALL_TOOLS` carry the tools' prompt guidelines, since the system prompt rules only cover declared tools.
 
+## Send assistant messages
+
+The CLI registers `send_commentary` and `finish_turn` as ordinary tools, not sandbox globals.
+They remain callable from scripts while inactive:
+
+```js
+await tools.send_commentary({ message: "The comparison is complete." });
+await tools.finish_turn({ message: "The two configurations match." });
+```
+
+These calls return only small acknowledgements.
+The messages become native assistant output after the outer `codemode` call completes, not script output from `text()` or `return`.
+`send_commentary` does not end the turn.
+`finish_turn` skips the automatic model follow-up after successful outer execution; an empty `message` stops silently.
+It does not exit the script or cancel sibling calls, so finish or await required work before the script returns.
+A failed or aborted script does not apply the finish request.
+Extensions can still request continuation, and new user input can start another model request.
+SDK hosts register these tools with [`createAssistantOutputExtension()`](sdk.md#assistant-output).
+
 ## Store values
 
 `store(key, value)` keeps a JSON value under a string key for later `codemode` calls; storing `undefined` deletes the key. `load(key)` returns the value, or `undefined`. Writes are kept only when the script succeeds: each successful script that stores values appends a `codemode-store` custom entry to the session, so resumed sessions keep the values and each branch sees only the values written on its path.

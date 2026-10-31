@@ -142,6 +142,14 @@ Inline extension factories can be supplied through `DefaultResourceLoader`. Give
 
 The CLI loads `codemode`, `tool_search`, and MCP as built-in extensions. SDK sessions do not; add `createCodemodeExtension()`, `createToolSearchExtension()`, and `createMcpExtension()` to the `extensionFactories` of `DefaultResourceLoader`. `codemode` and `tool_search` are registered inactive: enable them through the `defaultTools` setting (`["+codemode", "+tool_search"]` keeps the other default tools), or let the MCP extension activate them: `codemode` for servers with `codemode` exposure, `tool_search` for servers with `deferred` exposure. The MCP extension connects its servers on `session_start`, so call `session.bindExtensions()`. See [Codemode and MCP](../examples/sdk/14-codemode-mcp.ts).
 
+### Assistant output
+
+The CLI also loads the `assistant-output` built-in extension.
+SDK hosts add `createAssistantOutputExtension()` to `DefaultResourceLoader`'s `extensionFactories` to register `send_commentary` and `finish_turn`.
+Both tools start inactive but remain callable from codemode; activate them through `defaultTools` or `setActiveTools()` for direct model calls.
+They use the tool context's native assistant-output methods, available to custom tools without this factory.
+See [Assistant output from tools](extensions.md#assistant-output-from-tools) for delivery, completion, and failure semantics.
+
 See the focused examples for [models](../examples/sdk/02-custom-model.ts), [tools](../examples/sdk/05-tools.ts), [extensions](../examples/sdk/06-extensions.ts), and [full control](../examples/sdk/12-full-control.ts).
 
 ## Examples
