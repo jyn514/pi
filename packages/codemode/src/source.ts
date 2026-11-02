@@ -2,16 +2,22 @@
  * Codemode source format: JavaScript, optionally preceded by one options line.
  *
  * ```js
- * // @options: {"max_output_tokens": 2000, "timeout_ms": 30000}
- * const text = await tools.read({ path: "package.json" });
- * text(JSON.parse(text).name);
+ * // @options: {"max_call_output_tokens": 2000, "timeout_ms": 30000}
+ * const contents = await tools.read({ path: "package.json" });
+ * text(JSON.parse(contents).name);
  * ```
  */
 
 export const CODEMODE_OPTIONS_PREFIX = "// @options:";
 
-const SUPPORTED_FIELDS = ["max_output_tokens", "timeout_ms"] as const;
-const SUPPORTED_FIELDS_TEXT = "`max_output_tokens` and `timeout_ms`";
+const SUPPORTED_FIELDS = [
+	"max_call_output_tokens",
+	"max_combined_output_tokens",
+	"max_output_tokens",
+	"timeout_ms",
+] as const;
+const SUPPORTED_FIELDS_TEXT =
+	"`max_call_output_tokens`, `max_combined_output_tokens`, `max_output_tokens`, and `timeout_ms`";
 /** Largest delay `setTimeout` supports, which bounds `timeout_ms`. */
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
@@ -30,8 +36,10 @@ SOURCE: /[\s\S]+/
 `;
 
 export interface CodemodeSourceOptions {
-	/** Token budget for the script's output. */
-	maxOutputTokens?: number;
+	/** Token budget per emitted text value; callers enforce this, not the sandbox. */
+	maxCallOutputTokens?: number;
+	/** Combined text budget, including the legacy `max_output_tokens` alias; callers choose defaults. */
+	maxCombinedOutputTokens?: number;
 	/** Hard deadline for the whole script in milliseconds, including tool calls. */
 	timeoutMs?: number;
 }
@@ -75,12 +83,17 @@ function parseOptions(directive: string): CodemodeSourceOptions {
 		}
 	}
 	const options: CodemodeSourceOptions = {};
-	const { max_output_tokens, timeout_ms } = fields;
-	if (max_output_tokens !== undefined) {
-		if (!isSafeInteger(max_output_tokens)) {
-			throw new CodemodeSourceError("@options field `max_output_tokens` must be a non-negative safe integer");
+	const { max_combined_output_tokens, max_output_tokens, timeout_ms } = fields;
+	if (max_output_tokens !== undefined && max_combined_output_tokens !== undefined) {
+		throw new CodemodeSourceError("Supply only one of `max_output_tokens` and `max_combined_output_tokens`");
+	}
+	for (const field of ["max_call_output_tokens", "max_combined_output_tokens", "max_output_tokens"] as const) {
+		const value = fields[field];
+		if (value === undefined) continue;
+		if (!isSafeInteger(value)) {
+			throw new CodemodeSourceError(`@options field \`${field}\` must be a non-negative safe integer`);
 		}
-		options.maxOutputTokens = max_output_tokens;
+		options[field === "max_call_output_tokens" ? "maxCallOutputTokens" : "maxCombinedOutputTokens"] = value;
 	}
 	if (timeout_ms !== undefined) {
 		if (!isSafeInteger(timeout_ms) || timeout_ms === 0 || timeout_ms > MAX_TIMEOUT_MS) {
@@ -101,7 +114,7 @@ function parseOptions(directive: string): CodemodeSourceOptions {
 export function parseCodemodeSource(input: string): ParsedCodemodeSource {
 	if (input.trim() === "") {
 		throw new CodemodeSourceError(
-			'Expected JavaScript source text (non-empty). Provide JS only, optionally with a first line `// @options: {"max_output_tokens": 1000}`.',
+			'Expected JavaScript source text (non-empty). Provide JS only, optionally with a first line `// @options: {"max_call_output_tokens": 1000}`.',
 		);
 	}
 	const lines = input.split("\n");

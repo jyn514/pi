@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Code mode accepts `max_combined_output_tokens` as the canonical name of its aggregate text budget, retaining `max_output_tokens` as an alias and its 10,000-token default. It rejects the CLI's `max_call_output_tokens` option before starting a script; existing run checkpoints keep their recorded aggregate budgets.
+
 ## [1.5.0] - 2026-11-02
 
 ### Breaking Changes

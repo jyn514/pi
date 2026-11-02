@@ -25,8 +25,15 @@
 ### Changed
 
 - Moved enhanced edit-match diagnostics to the dotfiles extension. Built-in edit execution and previews now use plain match errors; successful edits, native previews, and `editContextLines` stay unchanged.
+- Codemode now limits each text, return, or console emission to 10000 estimated tokens by default, with no implicit combined cap. Use `max_call_output_tokens` to change that limit and `max_combined_output_tokens` (or its `max_output_tokens` alias) for an explicit combined cap.
 
 ### Fixed
+
+- Keep normal message colors and tool-status backgrounds on collapsed historical headings instead of dimming the entire older transcript.
+- Expand tool output, reasoning, summaries, and custom-message details when opening historical entries, without changing live expansion settings.
+- Fixed pending-input loss after recording or deferred-preflight failures, overlapping prompts falsely reporting started, and handoff observer failures invalidating captured work.
+- Fixed standalone Bun builds failing bytecode generation for extension aliases by compiling ES module bytecode.
+- Fixed native text reads allocating entire files before offset and output limits were applied, including oversized single lines.
 
 - Fixed normal session completion skipping `agent_before_settle` handlers and RPC prompts cancelled during preflight receiving no response.
 - Images in steering and follow-up messages, including `prompt()` while streaming, are now resized like images in idle prompts instead of being sent and saved at full size ([#11738](https://github.com/earendil-works/pi/issues/11738))
@@ -185,11 +192,6 @@
 
 ### Fixed
 
-- Keep normal message colors and tool-status backgrounds on collapsed historical headings instead of dimming the entire older transcript.
-- Expand tool output, reasoning, summaries, and custom-message details when opening historical entries, without changing live expansion settings.
-- Fixed pending-input loss after recording or deferred-preflight failures, overlapping prompts falsely reporting started, and handoff observer failures invalidating captured work.
-- Fixed standalone Bun builds failing bytecode generation for extension aliases by compiling ES module bytecode.
-- Fixed native text reads allocating entire files before offset and output limits were applied, including oversized single lines.
 - Fixed compaction and branch summaries failing with "generation hit the token cap" when reasoning used most of the fixed summary output limit. Summaries now use the model's output limit, and `compaction.reserveTokens` only controls when compaction starts ([#9512](https://github.com/earendil-works/pi/issues/9512), [#9075](https://github.com/earendil-works/pi/issues/9075)).
 - Fixed `models.schema.json` missing descriptions for provider and model fields, so editors showed no hints for them ([#10790](https://github.com/earendil-works/pi/issues/10790))
 - Fixed `pi update` failing with "Managed install marker is missing or invalid" when `managed-install.json` starts with a UTF-8 BOM, which Windows PowerShell 5.1 adds when it rewrites the file.

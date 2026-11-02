@@ -96,12 +96,23 @@ if (result.ok) {
 `parseCodemodeSource()` accepts a script whose first line may be an options line:
 
 ```js
-// @options: {"max_output_tokens": 2000, "timeout_ms": 30000}
+// @options: {"max_call_output_tokens": 2000, "max_combined_output_tokens": 8000, "timeout_ms": 30000}
 const source = await tools.read({ path: "package.json" });
 text(JSON.parse(source).name);
 ```
 
-Supported fields are `max_output_tokens`, a token budget for the output, and `timeout_ms`, a hard deadline. The sandbox does not act on them; the caller decides. The options line is replaced by an empty line, so line numbers in stack traces still match the input. Empty input, invalid JSON, unknown fields, an options line without code, or an options line on any line but the first throw `CodemodeSourceError`. `CODEMODE_SOURCE_GRAMMAR` is a Lark grammar for providers that support grammar-constrained tool input. Both are also available from the lightweight `@earendil-works/pi-codemode/source` entry.
+Supported fields are `max_call_output_tokens` (a budget per emitted text value), `max_combined_output_tokens` (a budget across emitted text), and `timeout_ms` (a hard deadline).
+`max_output_tokens` remains an alias for the combined budget; supplying both combined names is an error.
+Token budgets accept non-negative safe integers, including zero.
+The parsed options are `maxCallOutputTokens`, `maxCombinedOutputTokens`, and `timeoutMs`; the alias normalizes into `maxCombinedOutputTokens`.
+The sandbox does not enforce these options or choose defaults; the caller does.
+The coding-agent CLI defaults to 10,000 tokens per emitted text value with no implicit combined cap; durable keeps its 10,000-token combined default and rejects an explicit per-call budget.
+Neither output option caps the nested tool result that a script receives before choosing what to emit.
+
+The options line is replaced by an empty line, so line numbers in stack traces still match the input.
+Empty input, invalid JSON, unknown fields, an options line without code, or an options line on any line but the first throw `CodemodeSourceError`.
+`CODEMODE_SOURCE_GRAMMAR` is a Lark grammar for providers that support grammar-constrained tool input.
+Both are also available from the lightweight `@earendil-works/pi-codemode/source` entry.
 
 ## Bundled Node and Bun hosts
 

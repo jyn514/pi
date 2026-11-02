@@ -4390,12 +4390,17 @@ data and journaled like other globals. The result's content is a
 `Script completed`/`Script failed` header with the wall time since
 `startedAt`, the text items (`==> text N/M <==` when there are several), the
 `console` lines in one `<console_output>` block, the returned value, and on
-failure the error with the calls already made. Text past `max_output_tokens`
+failure the error with the calls already made. Text past `max_combined_output_tokens`
 (default 10000) keeps its start and end, the complete text written to a file
 (`details.fullOutputPath`); images are saved to files, their paths next to them.
+`max_output_tokens` remains an alias for the combined budget; supplying both
+names is an error. Durable rejects an explicit `max_call_output_tokens`,
+including zero, before recording a run start or executing the script.
+Per-emission limits are supported only by the coding-agent CLI.
+A resumed run keeps the combined budget already recorded in its start data.
 The Harness cuts a result past the tool's `outputLimits` (4 MiB, 100,000 lines)
 without such a file, so the text is also cut when it exceeds 1 Mi characters or
-the line limit, whatever `max_output_tokens` says. The files go to a temp
+the line limit, whatever the combined token option says. The files go to a temp
 directory of the environment that the run creates once and records in its run
 document (`outputDir`) before writing to it, under fixed names (`output.txt`,
 `image-<n>.<ext>`): a rerun after a crash overwrites them instead of adding new

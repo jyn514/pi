@@ -29,7 +29,7 @@ const TEXT_OUTPUT_SCHEMA: CodemodeJsonSchema = { type: "string" };
 const DESCRIPTION_INTRO = `Run JavaScript that calls other tools. The input is raw JavaScript (not JSON, no code fence), run as an async function body in a QuickJS sandbox: top-level \`await\` and \`return\` work. No Node, file system, network, or timers.
 - \`await tools.<name>({ ...args })\` resolves to a string, or an object if the tool's declaration says so, and rejects with an Error on failure. A tool whose declaration returns an object resolves on failure too when it returned that object; check its fields. Calls still running when the script ends are cancelled.
 - The script survives a restart: it resumes where it was, without running finished calls again.
-- Optional first line: \`// @options: {"max_output_tokens": 10000, "timeout_ms": 60000}\``;
+- Optional first line: \`// @options: {"max_combined_output_tokens": 10000, "timeout_ms": 60000}\`. The combined text budget defaults to 10000; \`max_output_tokens\` is its legacy alias. Durable rejects \`max_call_output_tokens\`.`;
 
 /** The code mode tool's description: the script environment and its globals, the same for every conversation. */
 export function codemodeDescription(models: boolean): string {

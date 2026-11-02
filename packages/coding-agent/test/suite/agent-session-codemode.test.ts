@@ -15,7 +15,7 @@ import {
 } from "@earendil-works/pi-ai";
 import type { ToolResultMessage, Usage } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import type { CustomEntry } from "../../src/core/session-manager.ts";
 import {
@@ -30,6 +30,7 @@ import {
 	type CodemodeToolDetails,
 	createCodemodeTool,
 } from "../../src/extensions/codemode/tool.ts";
+import * as outputFiles from "../../src/utils/output-files.ts";
 import { createHarness, getToolResult, type Harness, type HarnessOptions } from "./harness.ts";
 
 const TINY_PNG_BASE64 =
@@ -538,7 +539,7 @@ describe("codemode options and store", () => {
 		expect(invalid.content).toEqual([
 			{
 				type: "text",
-				text: "@options only supports `max_output_tokens` and `timeout_ms`; got `yield`",
+				text: "@options only supports `max_call_output_tokens`, `max_combined_output_tokens`, `max_output_tokens`, and `timeout_ms`; got `yield`",
 			},
 		]);
 
@@ -566,35 +567,288 @@ describe("codemode options and store", () => {
 		expect(n).toBeLessThan(512);
 	});
 
-	it("truncates output to the token budget and spills the full text", async () => {
+	it("keeps separate emissions below the default per-call limit without a combined cap", async () => {
+		const harness = await setup();
+		const result = await run(harness, 'text("a".repeat(24000)); text("b".repeat(24000));');
+		try {
+			expect(resultText(result)).toBe(
+				`==> text 1/2 <==\n${"a".repeat(24000)}\n==> text 2/2 <==\n${"b".repeat(24000)}`,
+			);
+			expect((result.details as unknown as CodemodeToolDetails).fullOutputPath).toBeUndefined();
+		} finally {
+			rmSync((result.details as unknown as CodemodeToolDetails).fullOutputPath ?? "", { force: true });
+		}
+	});
+
+	it("clips each oversized emission without consuming later text or return budgets", async () => {
 		const harness = await setup();
 		const result = await run(
 			harness,
-			`// @options: {"max_output_tokens": 30}\nfor (let i = 0; i < 100; i++) text("row " + i);\nimage("data:image/png;base64,${TINY_PNG_BASE64}");`,
+			'// @options: {"max_call_output_tokens": 2}\ntext("AAAAAmiddleAAAAA"); text("ok"); text("BBBBBmiddleBBBBB"); return "end";',
 		);
-		const details = result.details as unknown as CodemodeToolDetails;
-		const path = details.fullOutputPath;
+		const path = (result.details as unknown as CodemodeToolDetails).fullOutputPath;
 		if (!path) throw new Error("No spill file");
 		try {
 			const text = resultText(result);
-			expect(text).toMatch(/^Warning: truncated output/);
-			expect(text).toContain("row 0\n");
-			expect(text).toContain("tokens truncated");
-			expect(text).toContain("row 99\n");
-			expect(text).not.toContain("row 50\n");
-			expect(text).toContain(`[Full output: ${path} (read with offset/limit)]`);
-			// Images follow the truncated text, each after the path it was saved to.
-			expect(result.content.at(-1)).toEqual({ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" });
-			expect(checkSavedImages(text.split("\n").at(-2) ?? "")).toBe("<saved>");
+			expect(text).toContain("for text 1");
+			expect(text).toContain("for text 3");
+			expect(text).toContain("AAAA…2 tokens truncated…AAAA");
+			expect(text).toContain("BBBB…2 tokens truncated…BBBB");
+			expect(text).toContain("==> text 2/4 <==\nok");
+			expect(text).toContain("==> text 4/4 <==\nend");
+			expect(text.match(/\[Full output:/g)).toHaveLength(2);
 			expect(readFileSync(path, "utf8")).toBe(
-				Array.from({ length: 100 }, (_, i) => `==> text ${i + 1}/100 <==\nrow ${i}`).join("\n"),
+				"==> text 1/4 <==\nAAAAAmiddleAAAAA\n==> text 2/4 <==\nok\n==> text 3/4 <==\nBBBBBmiddleBBBBB\n==> text 4/4 <==\nend",
 			);
 		} finally {
 			rmSync(path, { force: true });
 		}
+	});
 
-		const small = await run(harness, "return { ok: true };");
-		expect((small.details as unknown as CodemodeToolDetails).fullOutputPath).toBeUndefined();
+	it.each(["max_combined_output_tokens", "max_output_tokens"])(
+		"applies explicit %s after per-call clipping and recovers the original",
+		async (option) => {
+			const harness = await setup();
+			const result = await run(
+				harness,
+				`// @options: {"max_call_output_tokens": 2, "${option}": 30}\ntext("AAAAAmiddleAAAAA"); text("ok"); return "BBBBBmiddleBBBBB";`,
+			);
+			const path = (result.details as unknown as CodemodeToolDetails).fullOutputPath;
+			if (!path) throw new Error("No spill file");
+			try {
+				const text = resultText(result);
+				expect(text).toMatch(/^Warning: truncated output \(original token count:/);
+				expect(text).not.toContain("middle");
+				expect(text.match(/\[Full output:/g)).toHaveLength(1);
+				expect(readFileSync(path, "utf8")).toBe(
+					"==> text 1/3 <==\nAAAAAmiddleAAAAA\n==> text 2/3 <==\nok\n==> text 3/3 <==\nBBBBBmiddleBBBBB",
+				);
+			} finally {
+				rmSync(path, { force: true });
+			}
+		},
+	);
+
+	it.each([0, 1, 2])("retains exactly the per-call payload boundary for %s tokens", async (tokens) => {
+		const harness = await setup();
+		const exact = "x".repeat(tokens * 4);
+		const result = await run(
+			harness,
+			`// @options: {"max_call_output_tokens": ${tokens}}\ntext(${JSON.stringify(exact)});`,
+		);
+		const details = result.details as unknown as CodemodeToolDetails;
+		expect(resultText(result)).toBe(exact);
+		expect(details.fullOutputPath).toBeUndefined();
+		const over = await run(
+			harness,
+			`// @options: {"max_call_output_tokens": ${tokens}}\nreturn ${JSON.stringify(`${exact}y`)};`,
+		);
+		const path = (over.details as unknown as CodemodeToolDetails).fullOutputPath;
+		if (!path) throw new Error("No spill file");
+		try {
+			const text = resultText(over);
+			expect(text).toContain("1 tokens truncated");
+			expect(text).toContain(`[Full output: ${path}`);
+			if (tokens === 0) expect(text).not.toContain("y");
+			expect(readFileSync(path, "utf8")).toBe(`${exact}y`);
+		} finally {
+			rmSync(path, { force: true });
+		}
+	});
+
+	it("keeps zero combined-budget recovery visible without retaining payload", async () => {
+		const harness = await setup();
+		const result = await run(harness, '// @options: {"max_combined_output_tokens": 0}\ntext("secret-tail");');
+		const path = (result.details as unknown as CodemodeToolDetails).fullOutputPath;
+		if (!path) throw new Error("No spill file");
+		try {
+			expect(resultText(result)).not.toContain("secret-tail");
+			expect(resultText(result)).toContain(`[Full output: ${path}`);
+			expect(readFileSync(path, "utf8")).toBe("secret-tail");
+		} finally {
+			rmSync(path, { force: true });
+		}
+	});
+
+	it("limits each raw console invocation and serialized value independently", async () => {
+		const harness = await setup();
+		const result = await run(
+			harness,
+			'// @options: {"max_call_output_tokens": 2}\ntext(""); text({a:1}); console.log("12345678"); console.warn("abcdefgh"); console.error("ABCDEFGHIJKL"); return {b:2};',
+		);
+		const path = (result.details as unknown as CodemodeToolDetails).fullOutputPath;
+		if (!path) throw new Error("No spill file");
+		try {
+			const text = resultText(result);
+			expect(text).toContain('==> text 1/3 <==\n==> text 2/3 <==\n{"a":1}\n==> text 3/3 <==\n{"b":2}');
+			expect(text).toContain("<console_output>\n12345678\nabcdefgh\nWarning: truncated output for console call 3");
+			expect(text).toContain("ABCD…1 tokens truncated…IJKL");
+			expect(text).toMatch(/<\/console_output>$/);
+			expect(readFileSync(path, "utf8")).toContain("12345678\nabcdefgh\nABCDEFGHIJKL\n</console_output>");
+		} finally {
+			rmSync(path, { force: true });
+		}
+	});
+
+	it("preserves text/image order under per-call clipping", async () => {
+		const harness = await setup();
+		const result = await run(
+			harness,
+			`// @options: {"max_call_output_tokens": 1}\ntext("abcdefgh"); image("data:image/png;base64,${TINY_PNG_BASE64}"); text("end");`,
+		);
+		const path = (result.details as unknown as CodemodeToolDetails).fullOutputPath;
+		try {
+			const text = checkSavedImages(resultText(result));
+			expect(text).toContain("<saved>\n<image>\n==> text 2/2 <==\nend");
+			expect(text).toContain("ab…1 tokens truncated…gh");
+		} finally {
+			rmSync(path ?? "", { force: true });
+		}
+	});
+
+	it("leaves large nested results intact inside JavaScript", async () => {
+		const harness = await createHarness({
+			initialActiveToolNames: ["codemode", "read"],
+			extensionFactories: [createCodemodeExtension()],
+		});
+		harnesses.push(harness);
+		writeFileSync(join(harness.tempDir, "large.txt"), `${"x".repeat(48000)}tail-proof`);
+		const result = await run(
+			harness,
+			'// @options: {"max_call_output_tokens": 3}\nconst value = await tools.read({path:"large.txt"}); return value.slice(-10);',
+		);
+		expect(resultText(result)).toBe("tail-proof");
+		expect((result.details as unknown as CodemodeToolDetails).fullOutputPath).toBeUndefined();
+	});
+
+	it("bounds failure diagnostics without numbering them or hiding completed calls", async () => {
+		const harness = await createHarness({
+			initialActiveToolNames: ["codemode", "read"],
+			extensionFactories: [createCodemodeExtension()],
+		});
+		harnesses.push(harness);
+		writeFileSync(join(harness.tempDir, "small.txt"), "ok");
+		const result = await run(
+			harness,
+			'// @options: {"max_call_output_tokens": 40}\ntext("partial"); await tools.read({path:"small.txt"}); throw new Error("z".repeat(1000));',
+		);
+		const details = result.details as unknown as CodemodeToolDetails;
+		if (!details.fullOutputPath) throw new Error("No spill file");
+		try {
+			expect(result.isError).toBe(true);
+			expect(details.calls).toMatchObject([{ name: "read", status: "ok" }]);
+			const text = resultText(result);
+			expect(text).toMatch(/^partial\nWarning: truncated output for diagnostic/);
+			expect(text).not.toContain("==> text");
+			expect(text).not.toContain("z".repeat(200));
+			expect(text).toContain("read (ok)");
+			const original = readFileSync(details.fullOutputPath, "utf8");
+			expect(original).toContain(`partial\nScript error:\nError: ${"z".repeat(1000)}`);
+			expect(original).toContain("read (ok)");
+		} finally {
+			rmSync(details.fullOutputPath, { force: true });
+		}
+	});
+
+	it("rejects conflicting or invalid token options before nested effects", async () => {
+		const harness = await createHarness({
+			initialActiveToolNames: ["codemode", "write"],
+			extensionFactories: [createCodemodeExtension()],
+		});
+		harnesses.push(harness);
+		for (const options of [
+			{ max_call_output_tokens: -1 },
+			{ max_call_output_tokens: 0.5 },
+			{ max_call_output_tokens: "1" },
+			{ max_combined_output_tokens: null },
+			{ max_combined_output_tokens: Number.MAX_SAFE_INTEGER + 1 },
+			{ max_combined_output_tokens: 1, max_output_tokens: 1 },
+		]) {
+			const result = await run(
+				harness,
+				`// @options: ${JSON.stringify(options)}\nawait tools.write({path:"must-not-exist",content:"bad"});`,
+			);
+			expect(result.isError).toBe(true);
+			expect(() => readFileSync(join(harness.tempDir, "must-not-exist"))).toThrow();
+		}
+	});
+
+	it.each([{}, { max_combined_output_tokens: 0 }])(
+		"keeps executed output when its recovery file cannot be written (%j)",
+		async (combined) => {
+			const harness = await setup();
+			const spill = vi.spyOn(outputFiles, "writeOutputFile").mockRejectedValueOnce(new Error("disk unavailable"));
+			try {
+				const result = await run(
+					harness,
+					`// @options: ${JSON.stringify({ max_call_output_tokens: 0, ...combined })}\ntext("hidden"); throw new Error("boom");`,
+				);
+				expect(result.isError).toBe(true);
+				expect(resultText(result)).toContain("Could not save the full output: disk unavailable");
+				expect((result.details as unknown as CodemodeToolDetails).fullOutputPath).toBeUndefined();
+				expect(spill).toHaveBeenCalledTimes(1);
+				const original = spill.mock.calls[0][2];
+				expect(original).toContain("hidden\nScript error:\nError: boom");
+			} finally {
+				spill.mockRestore();
+			}
+		},
+	);
+
+	it.each(["max_combined_output_tokens", "max_output_tokens"])(
+		"truncates small emissions with explicit %s and spills the full text",
+		async (option) => {
+			const harness = await setup();
+			const result = await run(
+				harness,
+				`// @options: {"${option}": 30}\nfor (let i = 0; i < 100; i++) text("row " + i);\nimage("data:image/png;base64,${TINY_PNG_BASE64}");`,
+			);
+			const details = result.details as unknown as CodemodeToolDetails;
+			const path = details.fullOutputPath;
+			if (!path) throw new Error("No spill file");
+			try {
+				const text = resultText(result);
+				expect(text).toMatch(/^Warning: truncated output/);
+				expect(text).toContain("row 0\n");
+				expect(text).toContain("tokens truncated");
+				expect(text).toContain("row 99\n");
+				expect(text).not.toContain("row 50\n");
+				expect(text).toContain(`[Full output: ${path} (read with offset/limit)]`);
+				// Images follow the truncated text, each after the path it was saved to.
+				expect(result.content.at(-1)).toEqual({ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" });
+				expect(checkSavedImages(text.split("\n").at(-2) ?? "")).toBe("<saved>");
+				expect(readFileSync(path, "utf8")).toBe(
+					Array.from({ length: 100 }, (_, i) => `==> text ${i + 1}/100 <==\nrow ${i}`).join("\n"),
+				);
+			} finally {
+				rmSync(path, { force: true });
+			}
+
+			const small = await run(harness, "return { ok: true };");
+			expect((small.details as unknown as CodemodeToolDetails).fullOutputPath).toBeUndefined();
+		},
+	);
+
+	it("does not let a large combined cap raise the default per-call limit", async () => {
+		const harness = await setup();
+		const exact = await run(harness, 'text("x".repeat(40000));');
+		expect(resultText(exact)).toHaveLength(40000);
+		expect((exact.details as unknown as CodemodeToolDetails).fullOutputPath).toBeUndefined();
+		const clipped = await run(
+			harness,
+			'// @options: {"max_combined_output_tokens": 100000}\nreturn "x".repeat(40001);',
+		);
+		const path = (clipped.details as unknown as CodemodeToolDetails).fullOutputPath;
+		if (!path) throw new Error("No spill file");
+		try {
+			expect(resultText(clipped)).toContain("Warning: truncated output for text 1");
+			expect(readFileSync(path, "utf8")).toHaveLength(40001);
+		} finally {
+			rmSync(path, { force: true });
+		}
+		const raised = await run(harness, '// @options: {"max_call_output_tokens": 10001}\nreturn "x".repeat(40001);');
+		expect(resultText(raised)).toHaveLength(40001);
+		expect((raised.details as unknown as CodemodeToolDetails).fullOutputPath).toBeUndefined();
 	});
 
 	// #10678: joining the text items was quadratic, about 10 s here for the item limit.
@@ -950,6 +1204,27 @@ describe("codemode models", () => {
 		]);
 		expect(result.usage?.cost.total).toBeCloseTo(0.04, 10);
 		expect(harness.session.getSessionStats().cost).toBeCloseTo(0.04, 10);
+	});
+
+	it("bounds the omitted-image diagnostic even at zero tokens without numbering it", async () => {
+		const { harness } = await setup();
+		const result = await run(
+			harness,
+			'// @options: {"max_call_output_tokens": 0}\nconst model = await models.getModelOfType("image", "scorer", "painter"); await models.generateImages(model, {input: [{type:"text", text:"a fox"}]});',
+		);
+		const details = result.details as unknown as CodemodeToolDetails;
+		if (!details.fullOutputPath) throw new Error("No spill file");
+		try {
+			expect(result.isError).toBe(false);
+			expect(resultText(result)).toMatch(/^Warning: truncated output for diagnostic/);
+			expect(resultText(result)).not.toContain("==> text");
+			expect(resultText(result)).toContain(`[Full output: ${details.fullOutputPath}`);
+			expect(readFileSync(details.fullOutputPath, "utf8")).toBe(
+				"Note: models.generateImages() returned 1 image that the script did not show. Show each image block of result.output with image(block).",
+			);
+		} finally {
+			rmSync(details.fullOutputPath, { force: true });
+		}
 	});
 
 	it("notes generated images that the script did not show", async () => {

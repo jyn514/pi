@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- `parseCodemodeSource()` now returns `maxCombinedOutputTokens` instead of `maxOutputTokens` for the combined output budget, including the legacy source option.
+
+### Added
+
+- Added `max_call_output_tokens` and `max_combined_output_tokens` source options for per-emission and aggregate text budgets. `max_output_tokens` remains an alias for the aggregate budget; supplying both aggregate names is an error. Callers enforce these options and select their defaults.
+
 ## [1.5.0] - 2026-11-02
 
 ### Changed

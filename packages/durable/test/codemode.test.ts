@@ -987,6 +987,74 @@ describe("durable code mode output and tool search", () => {
 		expect(await readFile(path!, "utf8")).toBe(`BEGIN${"x".repeat(1000)}END`);
 	});
 
+	it("accepts the canonical combined option and the legacy alias with the same budget", async () => {
+		for (const field of ["max_combined_output_tokens", "max_output_tokens"]) {
+			const { text, message } = await runScript(
+				`// @options: {"${field}": 2}\nreturn "HEAD" + "x".repeat(40) + "TAIL";`,
+			);
+			expect(message.isError).toBe(false);
+			expect(text).toContain("HEAD…10 tokens truncated…TAIL");
+			expect(await readFile(message.details!.fullOutputPath!, "utf8")).toBe(`HEAD${"x".repeat(40)}TAIL`);
+		}
+	});
+
+	it("keeps the default aggregate budget when no output option is supplied", async () => {
+		const { text, message } = await runScript('text("a".repeat(24000)); text("b".repeat(24000));');
+		expect(message.isError).toBe(false);
+		expect(text).toContain("Warning: truncated output");
+		const original = await readFile(message.details!.fullOutputPath!, "utf8");
+		expect(original).toBe(`==> text 1/2 <==\n${"a".repeat(24000)}\n==> text 2/2 <==\n${"b".repeat(24000)}`);
+	});
+
+	it("rejects explicit per-call limits before recording a run or executing nested tools", async () => {
+		for (const options of [
+			{ max_call_output_tokens: 0 },
+			{ max_call_output_tokens: 7 },
+			{ max_call_output_tokens: 7, max_combined_output_tokens: 11 },
+		]) {
+			const chat = codemodeChat();
+			chat.setup.faux.setResponses([
+				script(`// @options: ${JSON.stringify(options)}\nawait tools.echo({text:"must-not-run"}); return 1;`),
+				DONE,
+			]);
+			const { harness, root } = await openChat(await openNodeSqliteStorage(await sqlitePath()), chat.setup);
+			try {
+				await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
+				const result = await resultText(chat.setup, root);
+				expect(result.isError).toBe(true);
+				expect(result.text).toContain("Durable codemode does not support `max_call_output_tokens`");
+				expect(chat.vm.starts).toBe(0);
+				expect(chat.echo.size).toBe(0);
+				expect(await nestedCount(harness)).toBe(0);
+				expect((await harness.snapshot(CodemodeRunDoc, await scriptTask(harness), context))?.start).toBeUndefined();
+			} finally {
+				await harness.close(context);
+			}
+		}
+	});
+
+	it("resumes with the aggregate budget recorded in the legacy run state", async () => {
+		const chat = codemodeChat();
+		const { harness, result } = await restart(
+			chat,
+			'// @options: {"max_output_tokens":700}\nawait tools.hold({}); return "HEAD" + "x".repeat(40) + "TAIL";',
+			async (opened, task) => {
+				await opened.commit(async (tx) => {
+					const run = await tx.doc(CodemodeRunDoc, task);
+					// Old records carry only this resolved aggregate value, not parsed option names.
+					run.start!.maxOutputTokens = 2;
+				}, context);
+				expect((await opened.snapshot(CodemodeRunDoc, task, context))?.start?.maxOutputTokens).toBe(2);
+			},
+		);
+		try {
+			expect(result.isError).toBe(false);
+			expect(result.text).toContain("HEAD…10 tokens truncated…TAIL");
+		} finally {
+			await harness.close(context);
+		}
+	});
+
 	it("keeps a result inside the tool's output limits whatever max_output_tokens says, spilling the rest", async () => {
 		// 6 MiB of text: over the Harness's 4 MiB limit, which would cut it without a spill file.
 		const big = await runScript(

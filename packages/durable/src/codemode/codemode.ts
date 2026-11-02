@@ -110,7 +110,7 @@ type Start = {
 	/** The namespaces of the tools, as `describeNamespace()` and `searchTools()` see them. */
 	namespaces: { name: string; description?: string; instructions?: string; tools: string[] }[];
 	globals: { name: string; spread: boolean }[];
-	/** `max_output_tokens` of the script's options line, or the default. */
+	/** Resolved combined text budget, retained unchanged when this run resumes. */
 	maxOutputTokens: number;
 	store: Record<string, JsonValue>;
 };
@@ -371,6 +371,11 @@ class CodemodeCall {
 
 	async execute(source: string): Promise<ToolExecutionResult> {
 		const { code, options: sourceOptions } = parseCodemodeSource(source);
+		if (sourceOptions.maxCallOutputTokens !== undefined) {
+			return errorResult(
+				"Durable codemode does not support `max_call_output_tokens`; use `max_combined_output_tokens` for a combined output limit.",
+			);
+		}
 		const { api, context } = this;
 		const agent = await api.agent(context);
 		const tools: DeclaredTool[] = agent.callable.map((tool) => ({
@@ -423,7 +428,7 @@ class CodemodeCall {
 					tools,
 					namespaces,
 					globals,
-					maxOutputTokens: sourceOptions.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+					maxOutputTokens: sourceOptions.maxCombinedOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
 					store: copyJson(store.values as JsonValue) as Record<string, JsonValue>,
 				};
 			}

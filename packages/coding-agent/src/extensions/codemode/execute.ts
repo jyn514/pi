@@ -302,8 +302,8 @@ export function readCodemodeStore(branch: readonly SessionEntry[]): Record<strin
 	return Object.fromEntries(store);
 }
 
-/** Default token budget for script output. */
-const DEFAULT_MAX_OUTPUT_TOKENS = 10_000;
+/** Default token budget for each emitted text value. */
+const DEFAULT_MAX_CALL_OUTPUT_TOKENS = 10_000;
 /** Characters per token when estimating. */
 const CHARS_PER_TOKEN = 4;
 
@@ -441,34 +441,86 @@ async function saveImages(items: (TextContent | ImageContent)[]): Promise<(TextC
 	return result.flat();
 }
 
-/**
- * Apply the token budget: when the combined text exceeds it, the text items become one
- * item that keeps the start and end of the text, and images follow it. The full text is written to
- * a temp file.
- */
-async function truncateOutput(
-	items: (TextContent | ImageContent)[],
-	maxTokens: number,
-): Promise<{ items: (TextContent | ImageContent)[]; fullOutputPath?: string }> {
-	const texts = items.filter((item): item is TextContent => item.type === "text").map((item) => item.text);
-	const combined = texts.join("\n");
+/** Keep the existing head/tail selection; notices do not consume the retained payload budget. */
+function clipOutput(text: string, maxTokens: number, label = ""): string | undefined {
 	const budget = maxTokens * CHARS_PER_TOKEN;
-	if (texts.length === 0 || combined.length <= budget) return { items };
+	if (text.length <= budget) return undefined;
 	const headChars = Math.floor(budget / 2);
 	const tailChars = budget - headChars;
-	const removed = combined.length - headChars - tailChars;
-	const head = combined.slice(0, headChars);
-	const tail = tailChars > 0 ? combined.slice(-tailChars) : "";
-	let text = `Warning: truncated output (original token count: ${Math.ceil(combined.length / CHARS_PER_TOKEN)})\nTotal output lines: ${combined.split("\n").length}\n\n${head}…${Math.ceil(removed / CHARS_PER_TOKEN)} tokens truncated…${tail}`;
-	const spilled = await spillOutput(combined);
-	text +=
+	const removed = text.length - budget;
+	const head = text.slice(0, headChars);
+	const tail = tailChars > 0 ? text.slice(-tailChars) : "";
+	return `Warning: truncated output${label} (original token count: ${Math.ceil(text.length / CHARS_PER_TOKEN)})\nTotal output lines: ${text.split("\n").length}\n\n${head}…${Math.ceil(removed / CHARS_PER_TOKEN)} tokens truncated…${tail}`;
+}
+
+/**
+ * Clip before formatting erases emission boundaries. Recovery always holds the original formatted
+ * text, including diagnostics, even when an explicit combined budget clips the presentation again.
+ */
+async function limitOutput(
+	output: readonly CodemodeOutputItem[],
+	diagnostics: readonly string[],
+	maxCallTokens: number,
+	maxCombinedTokens: number | undefined,
+): Promise<{ items: (TextContent | ImageContent)[]; fullOutputPath?: string }> {
+	let textIndex = 0;
+	let consoleIndex = 0;
+	let clipped = false;
+	const limited = output.map((item): CodemodeOutputItem => {
+		if (item.type !== "text") return item;
+		const label = item.console ? ` for console call ${++consoleIndex}` : ` for text ${++textIndex}`;
+		const text = clipOutput(item.text, maxCallTokens, label);
+		if (text === undefined) return item;
+		clipped = true;
+		return { ...item, text };
+	});
+	const limitedDiagnostics = diagnostics.map((text) => {
+		const limited = clipOutput(text, maxCallTokens, " for diagnostic");
+		if (limited !== undefined) clipped = true;
+		return { type: "text" as const, text: limited ?? text };
+	});
+	let items = joinAdjacentText([...formatOutput(limited), ...limitedDiagnostics]);
+	const combined =
+		maxCombinedTokens === undefined
+			? undefined
+			: clipOutput(
+					items
+						.filter((item): item is TextContent => item.type === "text")
+						.map((item) => item.text)
+						.join("\n"),
+					maxCombinedTokens,
+				);
+	if (!clipped && combined === undefined) return { items };
+
+	const original = joinAdjacentText([
+		...formatOutput(output),
+		...diagnostics.map((text) => ({ type: "text" as const, text })),
+	])
+		.filter((item): item is TextContent => item.type === "text")
+		.map((item) => item.text)
+		.join("\n");
+	const spilled = await spillOutput(original);
+	const recovery =
 		"path" in spilled
-			? `\n\n[Full output: ${spilled.path} (read with offset/limit)]`
-			: `\n\n[Could not save the full output: ${spilled.error}]`;
-	return {
-		items: [{ type: "text", text }, ...items.filter((item) => item.type === "image")],
-		...("path" in spilled ? { fullOutputPath: spilled.path } : {}),
-	};
+			? `[Full output: ${spilled.path} (read with offset/limit)]`
+			: `[Could not save the full output: ${spilled.error}]`;
+	if (combined !== undefined) {
+		// Preserve the combined limiter's text-then-images layout, including at zero tokens.
+		items = [{ type: "text", text: `${combined}\n\n${recovery}` }, ...items.filter((item) => item.type === "image")];
+	} else {
+		// Add recovery outside each clipped payload, before formatting/console grouping.
+		for (let index = 0; index < limited.length; index++) {
+			if (limited[index] !== output[index]) {
+				const item = limited[index];
+				if (item.type === "text") item.text += `\n\n${recovery}`;
+			}
+		}
+		for (let index = 0; index < limitedDiagnostics.length; index++) {
+			if (limitedDiagnostics[index].text !== diagnostics[index]) limitedDiagnostics[index].text += `\n\n${recovery}`;
+		}
+		items = joinAdjacentText([...formatOutput(limited), ...limitedDiagnostics]);
+	}
+	return { items, ...("path" in spilled ? { fullOutputPath: spilled.path } : {}) };
 }
 
 /**
@@ -623,21 +675,21 @@ export async function executeCodemode(
 		// pi extension: a returned value is appended like text().
 		if (result.value !== undefined) scriptOutput.push({ type: "text", text: valueText(result.value) });
 	}
-	const items = formatOutput(scriptOutput);
-	if (!result.ok) items.push({ type: "text", text: `Script error:\n${formatError(result, calls)}` });
-	if (generatedImages > 0 && !items.some((item) => item.type === "image")) {
-		items.push({
-			type: "text",
-			text: `Note: models.generateImages() returned ${generatedImages} image${generatedImages === 1 ? "" : "s"} that the script did not show. Show each image block of result.output with image(block).`,
-		});
+	const diagnostics: string[] = [];
+	if (!result.ok) diagnostics.push(`Script error:\n${formatError(result, calls)}`);
+	if (generatedImages > 0 && !scriptOutput.some((item) => item.type === "image")) {
+		diagnostics.push(
+			`Note: models.generateImages() returned ${generatedImages} image${generatedImages === 1 ? "" : "s"} that the script did not show. Show each image block of result.output with image(block).`,
+		);
 	}
 
-	const truncated = await truncateOutput(
-		joinAdjacentText(items),
-		sourceOptions.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+	const truncated = await limitOutput(
+		scriptOutput,
+		diagnostics,
+		sourceOptions.maxCallOutputTokens ?? DEFAULT_MAX_CALL_OUTPUT_TOKENS,
+		sourceOptions.maxCombinedOutputTokens,
 	);
-	// After truncation, which joins the text items and moves images after them, so each path stays
-	// next to its image and is never cut.
+	// Save after clipping so image labels cannot be cut away.
 	const output = joinAdjacentText(await saveImages(truncated.items));
 	const wallTime = ((performance.now() - startedAt) / 1000).toFixed(1);
 	const header = `${result.ok ? "Script completed" : "Script failed"}\nWall time ${wallTime} seconds\nOutput:\n`;

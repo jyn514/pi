@@ -17,11 +17,52 @@ describe("parseCodemodeSource", () => {
 		});
 		expect(parseCodemodeSource('  // @options:{"max_output_tokens":0,"timeout_ms":1500}\r\ntext(1)').options).toEqual(
 			{
-				maxOutputTokens: 0,
+				maxCombinedOutputTokens: 0,
 				timeoutMs: 1500,
 			},
 		);
 		expect(parseCodemodeSource("// @options: {}\ntext(1)")).toEqual({ code: "\ntext(1)", options: {} });
+	});
+
+	it("parses independent output budgets and normalizes the legacy combined alias", () => {
+		for (const field of ["max_combined_output_tokens", "max_output_tokens"]) {
+			expect(
+				parseCodemodeSource(`// @options: {"max_call_output_tokens":7,"${field}":23}\ntext(1)`).options,
+			).toEqual({ maxCallOutputTokens: 7, maxCombinedOutputTokens: 23 });
+		}
+		expect(parseCodemodeSource('// @options: {"max_call_output_tokens":0}\ntext(1)').options).toEqual({
+			maxCallOutputTokens: 0,
+		});
+	});
+
+	it("validates each output budget independently", () => {
+		for (const field of ["max_call_output_tokens", "max_combined_output_tokens", "max_output_tokens"]) {
+			for (const value of [0, 1, Number.MAX_SAFE_INTEGER]) {
+				const options = parseCodemodeSource(`// @options: ${JSON.stringify({ [field]: value })}\ntext(1)`).options;
+				expect(options).toEqual({
+					[field === "max_call_output_tokens" ? "maxCallOutputTokens" : "maxCombinedOutputTokens"]: value,
+				});
+			}
+			for (const value of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, "1", true, null, [], {}]) {
+				expect(() => parseCodemodeSource(`// @options: ${JSON.stringify({ [field]: value })}\ntext(1)`)).toThrow(
+					`@options field \`${field}\` must be a non-negative safe integer`,
+				);
+			}
+		}
+	});
+
+	it("rejects alias and canonical combined budgets together, even when equal or zero", () => {
+		for (const [alias, canonical] of [
+			[1, 2],
+			[1, 1],
+			[0, 0],
+		]) {
+			expect(() =>
+				parseCodemodeSource(
+					`// @options: {"max_output_tokens":${alias},"max_combined_output_tokens":${canonical}}\ntext(1)`,
+				),
+			).toThrow("Supply only one of `max_output_tokens` and `max_combined_output_tokens`");
+		}
 	});
 
 	it("only treats the first line as an options line", () => {
@@ -54,7 +95,7 @@ describe("parseCodemodeSource", () => {
 			["// @options: [1]\ntext(1)", /@options must be a JSON object with supported fields/],
 			[
 				'// @options: {"yield": 1}\ntext(1)',
-				"@options only supports `max_output_tokens` and `timeout_ms`; got `yield`",
+				"@options only supports `max_call_output_tokens`, `max_combined_output_tokens`, `max_output_tokens`, and `timeout_ms`; got `yield`",
 			],
 			[
 				'// @options: {"max_output_tokens": 1.5}\ntext(1)',

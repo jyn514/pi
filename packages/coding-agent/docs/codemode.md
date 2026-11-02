@@ -9,13 +9,30 @@ The tool input is raw JavaScript source, not JSON and not a markdown code fence.
 A script may start with an options line. It must be the first line; an options line anywhere else fails the call before the script runs:
 
 ```js
-// @options: {"max_output_tokens": 2000, "timeout_ms": 60000}
+// @options: {"max_call_output_tokens": 10000, "max_combined_output_tokens": 20000, "timeout_ms": 60000}
 ```
 
-- `max_output_tokens` (default 10000) limits the output. Longer output keeps its start and end, and the full text is written to a temp file whose path is included in the result. A script fails when its output passes 16777216 characters of text and base64 image data or 100000 `text()`, `image()`, and `console` calls; write large data to a file with a tool instead.
+- `max_call_output_tokens` (default 10000) limits each emitted text value independently: each `text(value)` after serialization, a successful top-level `return`, and each `console.*` invocation before console lines are grouped.
+  Framework error and omitted-image diagnostics each use the same limit, without becoming numbered text items.
+- `max_combined_output_tokens` (unset by default) limits the formatted text after per-call clipping, including item labels and the console wrapper.
+  `max_output_tokens` is its alias; supplying both names fails before the script runs.
+  A large combined limit does not raise the per-call limit.
+- Both token limits accept non-negative safe integers, including zero.
+  Each uses an estimate of four characters per token and keeps the start and end of oversized text.
+  Labels, truncation notices, recovery paths, and image tokens do not consume the per-call payload budget.
+  Recovery notices remain visible even at zero.
+  If either limit clips output, one temp file holds the complete original formatted text before either limit, including partial output and diagnostics.
+  The result names that file; a failed file write reports the recovery failure without discarding the executed result.
 - `timeout_ms` is a hard deadline for the whole script, including any wait for a free worker. It is unset by default. Image generation can take minutes, so do not set a short deadline for scripts that generate images.
 
-The result starts with `Script completed` or `Script failed`, the wall time, and the output. Text and image items appear in order, each on its own line. When the output has more than one text item (from `text()` or `return`), each starts with a `==> text N/M <==` line. `console` calls follow in one `<console_output>` block with one line per call. A failed script keeps its partial output, followed by `Script error:` and the error. Tool calls are real: calls made before a failure are not undone. Calls still running when the script ends are cancelled, and unawaited promises are discarded.
+For example, two `text()` calls emitting 6000 estimated tokens each both survive the default per-call limit even though they total more than 10000 tokens.
+An explicit combined limit can shorten that aggregate.
+These presentation limits do not clip nested tool results before JavaScript receives them and do not affect parallel tool execution.
+A script still fails when its output passes 16777216 characters of text and base64 image data or 100000 `text()`, `image()`, and `console` calls; write large data to a file with a tool instead.
+
+The result starts with `Script completed` or `Script failed`, the wall time, and the output.
+Per-call clipping preserves text/image order; combined clipping that truncates output puts the retained text first and images afterward.
+Each saved image path stays next to its image. When the output has more than one text item (from `text()` or `return`), each starts with a `==> text N/M <==` line. `console` calls follow in one `<console_output>` block with one line per call. A failed script keeps its partial output, followed by `Script error:` and the error. Tool calls are real: calls made before a failure are not undone. Calls still running when the script ends are cancelled, and unawaited promises are discarded.
 
 ## Globals
 
