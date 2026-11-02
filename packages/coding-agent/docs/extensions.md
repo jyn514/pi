@@ -1272,6 +1272,13 @@ pi.on("tool_result", async (event, ctx) => {
 
 Control flow helpers. `ctx.isIdle()` is false while Pi is processing an agent run, automatic retry, auto-compaction retry, or queued continuation.
 
+`ctx.hasPendingMessages()` inspects both steering and follow-up queues without consuming messages, including custom and other non-user roles.
+`ctx.hasPendingSteeringMessages()` inspects only steering, including every message role, without consuming messages.
+A waiting tool can use it to yield to queued steering without treating follow-ups as interruptions.
+Both predicates exclude already-selected input, next-turn asides, and other deferred input outside these two queues.
+Independently loaded extensions requiring steering-only visibility should check that `ctx.hasPendingSteeringMessages` is callable and require an updated Pi core if it is absent.
+
+
 ### ctx.shutdown()
 
 Request a graceful shutdown of pi.

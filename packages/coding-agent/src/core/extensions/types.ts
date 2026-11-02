@@ -379,8 +379,13 @@ export interface ExtensionContext {
 	signal: AbortSignal | undefined;
 	/** Abort the current agent operation */
 	abort(): void;
-	/** Whether there are queued messages waiting */
+	/**
+	 * Inspect both queues for still-queued messages of every role without consuming them.
+	 * Excludes selected inputs, next-turn asides, and other deferred input outside these queues.
+	 */
 	hasPendingMessages(): boolean;
+	/** Inspect only still-queued steering messages of every role without consuming them. */
+	hasPendingSteeringMessages(): boolean;
 	/** Gracefully shutdown pi and exit. Available in all contexts. */
 	shutdown(): void;
 	/** Get current context usage for the active model. */
@@ -2333,7 +2338,8 @@ export interface ExtensionContextActions {
 	isProjectTrusted: () => boolean;
 	getSignal: () => AbortSignal | undefined;
 	abort: () => void;
-	hasPendingMessages: () => boolean;
+	hasPendingMessages: ExtensionContext["hasPendingMessages"];
+	hasPendingSteeringMessages: ExtensionContext["hasPendingSteeringMessages"];
 	shutdown: () => void;
 	getContextUsage: () => ContextUsage | undefined;
 	compact: (options?: CompactOptions) => void;

@@ -353,8 +353,13 @@ export class Agent {
 		this.clearFollowUpQueue();
 	}
 
-	/** Returns true when either queue still contains pending messages. */
-	hasQueuedMessages(): boolean {
+	/**
+	 * Inspect still-queued messages of every role without consuming them.
+	 * Omit queue to inspect both lanes. Selected inputs are no longer queued.
+	 */
+	hasQueuedMessages(queue?: "steering" | "followUp"): boolean {
+		if (queue === "steering") return this.steeringQueue.hasItems();
+		if (queue === "followUp") return this.followUpQueue.hasItems();
 		return this.steeringQueue.hasItems() || this.followUpQueue.hasItems();
 	}
 

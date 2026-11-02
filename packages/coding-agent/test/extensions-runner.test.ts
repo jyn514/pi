@@ -109,6 +109,7 @@ describe("ExtensionRunner", () => {
 		getSignal: () => undefined,
 		abort: () => {},
 		hasPendingMessages: () => false,
+		hasPendingSteeringMessages: () => false,
 		shutdown: () => {},
 		getContextUsage: () => undefined,
 		compact: () => {},

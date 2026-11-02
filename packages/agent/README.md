@@ -423,6 +423,10 @@ agent.clearFollowUpQueue();
 agent.clearAllQueues();
 ```
 
+`hasQueuedMessages()` inspects both queues without consuming messages, regardless of role or queue mode.
+Pass `"steering"` or `"followUp"` to inspect only that lane.
+Selected inputs are no longer queued and are excluded.
+
 Use `clearSteeringQueue()`, `clearFollowUpQueue()`, or `clearAllQueues()` to discard queued and selected-but-unrecorded inputs in those lanes.
 `reset()` also discards retained initial input.
 Ending or aborting a run does not discard unrecorded input.
