@@ -16,6 +16,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import {
 	type AfterToolCallContext,
 	type AfterToolCallResult,
@@ -34,7 +35,14 @@ import {
 	type StreamFn,
 	type ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import { contentText, getCurrentSystemMessage, getCurrentTools, retryDelayMs } from "@earendil-works/pi-ai";
+import {
+	contentText,
+	getCurrentSystemMessage,
+	getCurrentTools,
+	getToolStateChanges,
+	retryDelayMs,
+	toToolDeclaration,
+} from "@earendil-works/pi-ai";
 import type {
 	AssistantMessage,
 	AuthResult,
@@ -457,6 +465,8 @@ export class AgentSession {
 	private _agentRunAbortRequested = false;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
+	private _pendingReload: (() => Promise<void>) | undefined;
+	private _reloadPromise: Promise<void> | undefined;
 	private _pauseState: PauseState = "unpaused";
 	private _pauseWaitPromise: Promise<void> | undefined;
 	private _resolvePauseWait: (() => void) | undefined;
@@ -881,6 +891,28 @@ export class AgentSession {
 			const failed = this._failedResponse;
 			this._failedResponse = undefined;
 			const prepare = async () => {
+				// Also covers first requests of retries/continuations, and reloads queued
+				// during virtual-model compaction below (after prepareNextTurn).
+				if (await this._drainPendingReload()) {
+					const messages = this.sessionManager.buildSessionProjection().messages;
+					const update = this._preparePromptAndToolLoadout(
+						this._runSystemPromptOptions ?? this._baseSystemPromptOptions,
+						messages,
+					);
+					const changes = getToolStateChanges(
+						getCurrentTools(messages),
+						this.agent.state.tools.map(toToolDeclaration),
+					);
+					if (update || changes.toolsAdded.length || changes.toolsRemoved.length) {
+						const message: SystemMessage = {
+							...(update ?? { role: "system", content: "", timestamp: Date.now() }),
+							...changes,
+						};
+						await this._handleAgentEvent({ type: "message_start", message });
+						await this._handleAgentEvent({ type: "message_end", message });
+						this._refreshFinalizedContext();
+					}
+				}
 				const projection = this.sessionManager.buildSessionProjection();
 				const canonicalContext = {
 					...request.context,
@@ -1059,6 +1091,7 @@ export class AgentSession {
 				: undefined);
 		this.agent.prepareNextTurnWithContext = async (turn, signal) => {
 			const context = await this._compactBeforeNextAssistantResponse(turn.context);
+			await this._drainPendingReload();
 			const previousSnapshot = await previousPrepareNextTurnWithContext?.({ ...turn, context }, signal);
 			const nextContext = previousSnapshot?.context ?? context;
 			const runOptions = this._runSystemPromptOptions ?? this._baseSystemPromptOptions;
@@ -1286,6 +1319,8 @@ export class AgentSession {
 				this._isEmittingAgentSettled = false;
 				this._notifyHandoffProgress();
 			}
+
+			await this._drainPendingReload();
 
 			// A deferred run settles inside its caller's drain. That caller retains
 			// ownership of the current record and must remain the only drain owner.
@@ -1672,6 +1707,7 @@ export class AgentSession {
 	 */
 	dispose(): void {
 		this._outstandingHandoff = undefined;
+		this._pendingReload = undefined;
 		try {
 			this._clearPause(true);
 			this.abortRetry();
@@ -1749,7 +1785,7 @@ export class AgentSession {
 
 	/** Whether the session has no active agent run, compaction, branch summary, retry, or queued continuation. */
 	get isIdle(): boolean {
-		return !this._isAgentRunActive && !this.isCompacting;
+		return !this._isAgentRunActive && !this.isCompacting && !this._pendingReload && !this._reloadPromise;
 	}
 
 	/** Current effective system prompt, including changes not yet sent to the model. */
@@ -2238,6 +2274,7 @@ export class AgentSession {
 						// Preserve upstream: preparation failure/cancellation is not an
 						// agent lifecycle, but its busy reservation must still be released.
 						this._isAgentRunActive = false;
+						await this._drainPendingReload();
 						this._resolveIdleWaitIfIdle();
 					}
 				}
@@ -3568,8 +3605,9 @@ export class AgentSession {
 		);
 	}
 
-	private _clearManualCompactionState(): void {
+	private async _clearManualCompactionState(): Promise<void> {
 		this._compactionAbortController = undefined;
+		await this._drainPendingReload();
 		this._resolveIdleWaitIfIdle();
 	}
 
@@ -3716,7 +3754,7 @@ export class AgentSession {
 			};
 			// compaction_end listeners may submit queued prompts, so expose idle state before notifying them.
 			if (this._compactionAbortController === abortController) {
-				this._clearManualCompactionState();
+				await this._clearManualCompactionState();
 			}
 			this._emit({
 				type: "compaction_end",
@@ -3731,7 +3769,7 @@ export class AgentSession {
 			const aborted = abortController.signal.aborted || cancelledByExtension;
 			const errorMessage = aborted ? undefined : `Compaction failed: ${message}`;
 			if (this._compactionAbortController === abortController) {
-				this._clearManualCompactionState();
+				await this._clearManualCompactionState();
 			}
 			this._emit({
 				type: "compaction_end",
@@ -3751,7 +3789,7 @@ export class AgentSession {
 			throw error;
 		} finally {
 			if (this._compactionAbortController === abortController) {
-				this._clearManualCompactionState();
+				await this._clearManualCompactionState();
 			}
 		}
 	}
@@ -4527,15 +4565,52 @@ export class AgentSession {
 		});
 	}
 
+	/**
+	 * Request a mode-owned reload at the next safe request boundary, or immediately when idle.
+	 * Busy requests return after admission, not completion; awaiting completion from an
+	 * extension hook would deadlock the run. Repeated pending/in-progress requests coalesce.
+	 * The callback owns error reporting and mode-specific UI, and uses performReload for the admitted reload.
+	 */
+	async requestReload(reload: (performReload: AgentSession["reload"]) => Promise<void>): Promise<void> {
+		if (this._pendingReload || this._reloadPromise) return;
+		const idle = this.isIdle;
+		this._pendingReload = () => reload((options) => this._reload(options));
+		if (idle) await this._drainPendingReload();
+	}
+
+	private async _drainPendingReload(): Promise<boolean> {
+		if (this._reloadPromise) {
+			await this._reloadPromise;
+			return true;
+		}
+		const reload = this._pendingReload;
+		if (!reload) return false;
+		this._pendingReload = undefined;
+		// Start on a microtask so recursive requests see the in-progress owner.
+		this._reloadPromise = Promise.resolve().then(reload);
+		try {
+			await this._reloadPromise;
+			return true;
+		} finally {
+			this._reloadPromise = undefined;
+			this._resolveIdleWaitIfIdle();
+		}
+	}
+
 	async reload(options?: { beforeSessionStart?: () => void | Promise<void> }): Promise<void> {
 		if (this.isStreaming) {
 			throw new Error("Wait for the current response to finish before reloading.");
 		}
+		await this._reload(options);
+	}
+
+	private async _reload(options?: { beforeSessionStart?: () => void | Promise<void> }): Promise<void> {
 		if (this.isCompacting) {
 			throw new Error("Wait for compaction to finish before reloading.");
 		}
-
 		const oldRunner = this._extensionRunner;
+		const previousBaseOptions = this._baseSystemPromptOptions;
+		const previousRunOptions = this._runSystemPromptOptions;
 		const previousFlagValues = oldRunner.getFlagValues();
 		await emitSessionShutdownEvent(oldRunner, { type: "session_shutdown", reason: "reload" });
 		oldRunner.invalidate();
@@ -4562,6 +4637,9 @@ export class AgentSession {
 			includeAllExtensionTools: true,
 		});
 
+		// Startup/discovery may register tools or add resources, rebuilding the base options.
+		// Do not expose the old runtime's resource snapshot to the new startup handlers.
+		this._runSystemPromptOptions = undefined;
 		const hasBindings =
 			this._extensionUIContext ||
 			this._extensionCommandContextActions ||
@@ -4572,6 +4650,40 @@ export class AgentSession {
 			await this._extensionRunner.emit({ type: "session_start", reason: "reload" });
 			this._extensionRunner.reportUnhandledMcpServers();
 			await this.extendResourcesFromExtensions("reload");
+		}
+
+		if (previousRunOptions) {
+			// Preserve deliberate before_agent_start edits, not unchanged resource snapshots.
+			const overrides = Object.fromEntries(
+				Object.entries(previousRunOptions).filter(
+					([key, value]) =>
+						!isDeepStrictEqual(value, previousBaseOptions[key as keyof NormalizedBuildSystemPromptOptions]),
+				),
+			) as Partial<NormalizedBuildSystemPromptOptions>;
+			const rebaseMap = <T>(base: Record<string, T>, run: Record<string, T>, fresh: Record<string, T>) => {
+				const result = { ...fresh };
+				for (const key of new Set([...Object.keys(base), ...Object.keys(run)])) {
+					if (isDeepStrictEqual(base[key], run[key])) continue;
+					if (key in run) result[key] = run[key];
+					else delete result[key];
+				}
+				return result;
+			};
+			this._runSystemPromptOptions = normalizeBuildSystemPromptOptions({
+				...this._baseSystemPromptOptions,
+				...overrides,
+				selectedTools: this.getActiveToolNames(),
+				toolSnippets: rebaseMap(
+					previousBaseOptions.toolSnippets,
+					previousRunOptions.toolSnippets,
+					this._baseSystemPromptOptions.toolSnippets,
+				),
+				toolGuidelines: rebaseMap(
+					previousBaseOptions.toolGuidelines,
+					previousRunOptions.toolGuidelines,
+					this._baseSystemPromptOptions.toolGuidelines,
+				),
+			});
 		}
 	}
 
@@ -5059,6 +5171,7 @@ export class AgentSession {
 			if (this._branchSummaryAbortController === abortController) {
 				this._branchSummaryAbortController = undefined;
 			}
+			if (!this.isStreaming && !this.isCompacting) await this._drainPendingReload();
 			this._resolveIdleWaitIfIdle();
 		}
 	}

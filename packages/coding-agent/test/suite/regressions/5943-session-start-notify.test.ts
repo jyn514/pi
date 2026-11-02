@@ -53,6 +53,8 @@ type RebindContext = {
 type ReloadCommandContext = {
 	hideThinkingBlock: boolean;
 	session: {
+		isIdle: boolean;
+		requestReload: (reload: () => Promise<void>) => Promise<void>;
 		isStreaming: boolean;
 		isCompacting: boolean;
 		reload: (options?: { beforeSessionStart?: () => void | Promise<void> }) => Promise<void>;
@@ -83,6 +85,7 @@ type ReloadCommandContext = {
 	editor: unknown;
 	defaultEditor: { setPaddingX: (padding: number) => void; setAutocompleteMaxVisible: (maxVisible: number) => void };
 	themeController: { applyFromSettings: () => Promise<void> };
+	reloadResources: () => Promise<void>;
 	resetExtensionUI: () => void;
 	rebuildChatFromMessages: () => void;
 	setupAutocompleteProvider: () => void;
@@ -101,6 +104,7 @@ type InteractiveModePrototype = {
 	): void;
 	rebindCurrentSession(this: RebindContext, options?: { renderBeforeBind?: boolean }): Promise<void>;
 	handleReloadCommand(this: ReloadCommandContext): Promise<void>;
+	reloadResources(this: ReloadCommandContext): Promise<void>;
 };
 
 const interactiveModePrototype = InteractiveMode.prototype as unknown as InteractiveModePrototype;
@@ -122,7 +126,12 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 	const editor = overrides.editor ?? {};
 	return {
 		hideThinkingBlock: overrides.hideThinkingBlock ?? false,
+		async reloadResources() {
+			await interactiveModePrototype.reloadResources.call(this);
+		},
 		session: {
+			isIdle: true,
+			requestReload: async (reload) => reload(),
 			isStreaming: false,
 			isCompacting: false,
 			reload: async (options) => {

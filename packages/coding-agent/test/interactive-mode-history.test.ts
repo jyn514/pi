@@ -17,7 +17,7 @@ import {
 import xterm from "@xterm/headless";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
-import type { AgentSessionEvent } from "../src/core/agent-session.ts";
+import type { AgentSession, AgentSessionEvent } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { createEventBus } from "../src/core/event-bus.ts";
 import { createExtensionRuntime, loadExtensionFromFactory } from "../src/core/extensions/loader.ts";
@@ -1232,6 +1232,7 @@ describe("lazy historical transcript", () => {
 		const session = Reflect.get(Reflect.get(host, "runtimeHost"), "session") as {
 			extensionRunner: { getMessageRenderer(): MessageRenderer };
 			modelRuntime: object;
+			reload: AgentSession["reload"];
 		};
 		session.extensionRunner.getMessageRenderer = () => renderer;
 		host.renderInitialMessages();
@@ -1241,6 +1242,9 @@ describe("lazy historical transcript", () => {
 		Object.assign(session, {
 			isStreaming: false,
 			isCompacting: false,
+			isIdle: true,
+			requestReload: async (reload: (performReload: AgentSession["reload"]) => Promise<void>) =>
+				reload((options) => session.reload(options)),
 			resourceLoader: { getThemes: () => ({ themes: [] }) },
 			reload: async (options: { beforeSessionStart(): void }) => {
 				renderer = () => new Text("new renderer", 0, 0);

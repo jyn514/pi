@@ -2144,7 +2144,7 @@ export class InteractiveMode {
 					return this.handleResumeSession(sessionPath, options);
 				},
 				reload: async () => {
-					await this.handleReloadCommand();
+					await this.handleReloadCommand(false);
 				},
 			},
 			shutdownHandler: () => {
@@ -6835,7 +6835,22 @@ export class InteractiveMode {
 	// Command handlers
 	// =========================================================================
 
-	private async handleReloadCommand(): Promise<void> {
+	private async handleReloadCommand(queue = true): Promise<void> {
+		if (queue) {
+			const session = this.session;
+			if (!session.isIdle) this.showStatus("Reload queued for the next response boundary.");
+			await session.requestReload(async (performReload) => {
+				// A pending request belongs to the session that accepted it.
+				if (this.session !== session) return;
+				try {
+					await this.reloadResources(performReload);
+				} catch (error) {
+					this.showError(`Reload failed: ${error instanceof Error ? error.message : String(error)}`);
+				}
+			});
+			return;
+		}
+		// ctx.reload() retains its completion semantics and existing busy behavior.
 		if (this.session.isStreaming) {
 			this.showWarning("Wait for the current response to finish before reloading.");
 			return;
@@ -6845,6 +6860,10 @@ export class InteractiveMode {
 			return;
 		}
 
+		await this.reloadResources((options) => this.session.reload(options));
+	}
+
+	private async reloadResources(performReload: AgentSession["reload"]): Promise<void> {
 		this.resetExtensionUI();
 
 		const reloadBox = new Container();
@@ -6889,7 +6908,7 @@ export class InteractiveMode {
 		};
 
 		try {
-			await this.session.reload({ beforeSessionStart: restoreChatBeforeSessionStart });
+			await performReload({ beforeSessionStart: restoreChatBeforeSessionStart });
 			restoreChatBeforeSessionStart();
 			this.keybindings.reload();
 			const activeHeader = this.customHeader ?? this.builtInHeader;

@@ -52,6 +52,10 @@ Review a session before exporting or sharing it. Sessions can contain prompts, t
 | `/changelog` | Show changelog entries |
 | `/quit` | Quit Pi |
 
+If a response or compaction is running, `/reload` queues instead of interrupting it.
+Pi reloads after the current response and all its tool calls finish, before the next model request, or when the session becomes idle.
+Repeated pending requests coalesce into one reload.
+
 ## Commands added by resources
 
 - Extensions can register commands with their own arguments and completion behavior.
