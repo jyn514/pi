@@ -496,7 +496,7 @@ export class SettingsSelectorComponent extends Container {
 				id: "steering-mode",
 				label: "Steering mode",
 				description:
-					"Enter while streaming queues steering messages. 'one-at-a-time': deliver one, wait for response. 'all': deliver all at once.",
+					"Enter while streaming queues steering messages. 'one-at-a-time': deliver one, user-role messages first. 'all': deliver all in arrival order.",
 				currentValue: config.steeringMode,
 				values: ["one-at-a-time", "all"],
 			},

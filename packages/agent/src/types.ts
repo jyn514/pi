@@ -47,10 +47,12 @@ export type StreamFn = (
 export type ToolExecutionMode = "sequential" | "parallel";
 
 /**
- * Controls how many queued user messages are injected when the agent loop reaches a queue drain point.
+ * Controls how many queued messages are injected when the agent loop reaches a queue drain point.
  *
- * - "all": drain and inject every queued message at that point.
- * - "one-at-a-time": drain and inject only the oldest queued message, leaving the rest queued for later drain points.
+ * - "all": drain and inject every queued message in arrival order.
+ * - "one-at-a-time": drain and inject one message, leaving the rest queued for later drain points.
+ *   Steering selects the oldest user-role message if available, otherwise the oldest queued message.
+ *   Follow-up always selects the oldest queued message.
  */
 export type QueueMode = "all" | "one-at-a-time";
 
