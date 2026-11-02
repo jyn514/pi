@@ -25,6 +25,8 @@ if (hasNativeBinary) {
 // files while respecting .gitignore; biome.json supplies the include patterns.
 // A negated pattern also excludes everything below a matching directory.
 const configuration = JSON.parse(readFileSync("biome.json", "utf8"));
+// The in-memory workspace cannot discover Git metadata. Git handles ignore filtering below instead.
+delete configuration.vcs;
 const patterns = configuration.files?.includes ?? ["**"];
 const files = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
 	encoding: "utf8",
