@@ -28,7 +28,7 @@ See [Choose a Model](models.md) for model selection and thinking controls.
 
 | Setting | Type | Default | Description |
 |---|---|---|---|
-| `steeringMode` | `"all" \| "one-at-a-time"` | `"one-at-a-time"` | How queued steering messages are delivered. |
+| `steeringMode` | `"all" \| "one-at-a-time"` | `"one-at-a-time"` | `"one-at-a-time"` delivers the oldest user-role message first, otherwise the oldest queued message. `"all"` delivers every queued message in arrival order. |
 | `followUpMode` | `"all" \| "one-at-a-time"` | `"one-at-a-time"` | How queued follow-up messages are delivered. |
 | `externalEditor` | string | `$VISUAL`, `$EDITOR`, then platform default | Command opened by the external-editor keybinding. |
 | `externalEditorUsesTerminal` | boolean | `true` | Whether the external editor uses Pi's terminal. Set to `false` when the command opens another window or pane. |

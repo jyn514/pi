@@ -389,7 +389,13 @@ unsubscribe();
 
 ## Steering and Follow-up
 
-Steering messages let you interrupt the agent while tools are running. Follow-up messages let you queue work after the agent would otherwise stop.
+Steering messages let you redirect the agent after its current response and tool calls finish.
+Follow-up messages let you queue work after the agent would otherwise stop.
+In `"one-at-a-time"` steering mode, the oldest `role: "user"` message takes priority over custom notifications and other non-user messages.
+Without a queued user message, steering selects the oldest queued message.
+Arrival order is preserved within each group; continuous user input can postpone notifications.
+This priority is based on message role, not human origin: agent-origin user messages receive the same priority.
+The `"all"` mode delivers every queued message in arrival order, and follow-up ordering stays FIFO in both modes.
 
 ```typescript
 agent.steeringMode = "one-at-a-time";

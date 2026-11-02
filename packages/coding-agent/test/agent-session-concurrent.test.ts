@@ -18,6 +18,7 @@ import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
+import { convertToLlm } from "../src/core/messages.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import {
@@ -160,6 +161,112 @@ describe("AgentSession concurrent prompt guard", () => {
 		// Cleanup
 		await session.abort();
 		await firstPrompt.catch(() => {});
+	});
+
+	it("should deliver user steering before queued custom notifications at the next turn boundary", async () => {
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		let finishFirstResponse!: () => void;
+		const firstResponseFinished = new Promise<void>((resolve) => {
+			finishFirstResponse = resolve;
+		});
+		let markFirstResponseStarted!: () => void;
+		const firstResponseStarted = new Promise<void>((resolve) => {
+			markFirstResponseStarted = resolve;
+		});
+		const requests: string[][] = [];
+		let firstResponseSignal: AbortSignal | undefined;
+		const agent = new Agent({
+			getApiKey: () => "test-key",
+			convertToLlm,
+			initialState: {
+				model,
+				systemPrompt: "Test",
+				tools: [],
+			},
+			streamFn: (_model, context, options) => {
+				requests.push(
+					context.messages
+						.filter((message) => message.role === "user")
+						.map((message) =>
+							typeof message.content === "string"
+								? message.content
+								: message.content
+										.filter((part): part is TextContent => part.type === "text")
+										.map((part) => part.text)
+										.join("\n"),
+						),
+				);
+				const stream = createAssistantMessageEventStream();
+				const isFirstResponse = requests.length === 1;
+				if (isFirstResponse) firstResponseSignal = options?.signal;
+				queueMicrotask(async () => {
+					stream.push({ type: "start", partial: createAssistantMessage("") });
+					if (isFirstResponse) {
+						markFirstResponseStarted();
+						await firstResponseFinished;
+					}
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("Done") });
+				});
+				return stream;
+			},
+		});
+
+		const sessionManager = SessionManager.inMemory();
+		const settingsManager = SettingsManager.create(tempDir, tempDir);
+		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
+		const modelRegistry = await createModelRegistry(authStorage, tempDir);
+		await authStorage.modify("anthropic", async () => ({ type: "api_key", key: "test-key" }));
+		session = new AgentSession({
+			agent,
+			sessionManager,
+			settingsManager,
+			cwd: tempDir,
+			modelRuntime: getModelRuntime(modelRegistry),
+			resourceLoader: createTestResourceLoader(),
+		});
+		session.setSteeringMode("one-at-a-time");
+
+		const firstPrompt = session.prompt("First message");
+		try {
+			await firstResponseStarted;
+			expect(session.isStreaming).toBe(true);
+			for (const content of ["Notification A", "Notification B", "Notification C"]) {
+				await session.sendCustomMessage(
+					{ customType: "notification", content, display: false },
+					{ deliverAs: "steer" },
+				);
+			}
+			await expect(session.steer("User steering A")).resolves.toBe("queued");
+			await expect(session.steer("User steering B")).resolves.toBe("queued");
+
+			expect(session.getSteeringMessages()).toEqual(["User steering A", "User steering B"]);
+			expect(requests).toEqual([["First message"]]);
+			expect(firstResponseSignal?.aborted).toBe(false);
+
+			finishFirstResponse();
+			await firstPrompt;
+
+			expect(requests).toEqual([
+				["First message"],
+				["First message", "User steering A"],
+				["First message", "User steering A", "User steering B"],
+				["First message", "User steering A", "User steering B", "Notification A"],
+				["First message", "User steering A", "User steering B", "Notification A", "Notification B"],
+				[
+					"First message",
+					"User steering A",
+					"User steering B",
+					"Notification A",
+					"Notification B",
+					"Notification C",
+				],
+			]);
+			expect(session.pendingMessageCount).toBe(0);
+			expect(firstResponseSignal?.aborted).toBe(false);
+		} finally {
+			finishFirstResponse();
+			await firstPrompt.catch(() => {});
+		}
 	});
 
 	it("should allow followUp() while streaming", async () => {

@@ -154,10 +154,12 @@ type RetainedInput = {
 
 class PendingMessageQueue {
 	private messages: RetainedInput[] = [];
+	private readonly preferUserMessages: boolean;
 	public mode: QueueMode;
 
-	constructor(mode: QueueMode) {
+	constructor(mode: QueueMode, preferUserMessages = false) {
 		this.mode = mode;
+		this.preferUserMessages = preferUserMessages;
 	}
 
 	enqueue(message: RetainedInput): void {
@@ -170,13 +172,23 @@ class PendingMessageQueue {
 
 	peek(): RetainedInput[] {
 		if (this.mode === "all") return this.messages.slice();
-		const first = this.messages[0];
-		return first ? [first] : [];
+		const index = this.preferUserMessages
+			? Math.max(
+					0,
+					this.messages.findIndex(({ message }) => message.role === "user"),
+				)
+			: 0;
+		const next = this.messages[index];
+		return next ? [next] : [];
 	}
 
 	drain(): RetainedInput[] {
 		const drained = this.peek();
-		this.messages = this.messages.slice(drained.length);
+		if (this.mode === "all") {
+			this.messages = [];
+		} else if (drained.length > 0) {
+			this.messages.splice(this.messages.indexOf(drained[0]), 1);
+		}
 		return drained;
 	}
 
@@ -261,7 +273,7 @@ export class Agent {
 		this.prepareRequest = runtimeOptions.prepareRequest;
 		this.prepareNextTurn = runtimeOptions.prepareNextTurn;
 		this.prepareNextTurnWithContext = runtimeOptions.prepareNextTurnWithContext;
-		this.steeringQueue = new PendingMessageQueue(runtimeOptions.steeringMode ?? "one-at-a-time");
+		this.steeringQueue = new PendingMessageQueue(runtimeOptions.steeringMode ?? "one-at-a-time", true);
 		this.followUpQueue = new PendingMessageQueue(runtimeOptions.followUpMode ?? "one-at-a-time");
 		this.sessionId = runtimeOptions.sessionId;
 		this.thinkingBudgets = runtimeOptions.thinkingBudgets;
