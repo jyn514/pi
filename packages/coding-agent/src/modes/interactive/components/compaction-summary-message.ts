@@ -1,9 +1,10 @@
-import { Box, Container, Markdown, type MarkdownTheme, MouseRegion, Spacer, Text } from "@earendil-works/pi-tui";
+import { Box, Markdown, type MarkdownTheme, MouseRegion, Spacer, Text } from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import type { CompactionSummaryMessage } from "../../../core/messages.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { keyText } from "./keybinding-hints.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
+import { TimestampComponent } from "./timestamp.ts";
 
 /**
  * Component that renders a compaction message with collapsed/expanded state.
@@ -59,7 +60,7 @@ export class CompactionSummaryMessageComponent extends Box {
 
 	private updateDisplay(): void {
 		this.clear();
-		const content = new Container();
+		const content = new TimestampComponent(this.message.timestamp, 0, undefined, "customMessageBg");
 
 		const tokenStr = this.message.tokensBefore.toLocaleString();
 		const label = theme.fg("customMessageLabel", `\x1b[1m[compaction]\x1b[22m`);

@@ -8,6 +8,7 @@
 
 ### Added
 
+- Show local `HH:mm` clocks at the top right of transcript entries when the minute changes, without changing extension renderers. Keep component backgrounds, use contrasting text on grey panels, and isolate clock text styling.
 - Preview the opening reasoning line in collapsed headings for thinking-only assistant entries.
 - Show bounded path or command previews in collapsed historical tool headings without constructing tool bodies.
 - Added optional `renderHistorical` message-renderer registration for cheap, extension-formatted historical headings.

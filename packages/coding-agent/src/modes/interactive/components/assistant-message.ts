@@ -11,6 +11,7 @@ import {
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
+import { TimestampComponent } from "./timestamp.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
@@ -144,10 +145,18 @@ export class AssistantMessageComponent extends Container {
 		// line before the first visible block and after each visible thinking run that is followed
 		// by more visible content, while hidden thinking runs without a label contribute nothing.
 		let needsSpacer = true;
+		let needsTimestamp = true;
 		const addVisibleChild = (child: Component) => {
 			if (needsSpacer) {
 				this.contentContainer.addChild(new Spacer(this.outputPadY));
 				needsSpacer = false;
+			}
+			if (needsTimestamp) {
+				const timestamped = new TimestampComponent(message.timestamp, this.outputPad);
+				timestamped.addChild(child);
+				this.contentContainer.addChild(timestamped);
+				needsTimestamp = false;
+				return;
 			}
 			this.contentContainer.addChild(child);
 		};
@@ -249,22 +258,20 @@ export class AssistantMessageComponent extends Container {
 		const hasToolCalls = message.content.some((c) => c.type === "toolCall");
 		this.hasToolCalls = hasToolCalls;
 		if (message.stopReason === "length") {
-			this.contentContainer.addChild(new Spacer(this.outputPadY));
-			this.contentContainer.addChild(
-				new Text(theme.fg("error", "Response was truncated before completion."), this.outputPad, 0),
-			);
+			needsSpacer = true;
+			addVisibleChild(new Text(theme.fg("error", "Response was truncated before completion."), this.outputPad, 0));
 		} else if (!hasToolCalls) {
 			if (message.stopReason === "aborted") {
 				const abortMessage =
 					message.errorMessage && message.errorMessage !== "Request was aborted"
 						? message.errorMessage
 						: "Operation aborted";
-				this.contentContainer.addChild(new Spacer(this.outputPadY));
-				this.contentContainer.addChild(new Text(theme.fg("error", abortMessage), this.outputPad, 0));
+				needsSpacer = true;
+				addVisibleChild(new Text(theme.fg("error", abortMessage), this.outputPad, 0));
 			} else if (message.stopReason === "error") {
 				const errorMsg = message.errorMessage || "Unknown error";
-				this.contentContainer.addChild(new Spacer(this.outputPadY));
-				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), this.outputPad, 0));
+				needsSpacer = true;
+				addVisibleChild(new Text(theme.fg("error", `Error: ${errorMsg}`), this.outputPad, 0));
 			}
 		}
 	}

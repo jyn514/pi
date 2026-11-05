@@ -183,6 +183,7 @@ import {
 } from "./components/status-indicator.ts";
 import { ThemedText } from "./components/themed-text.ts";
 import { ThinkingSelectorComponent } from "./components/thinking-selector.ts";
+import { TimestampGroupComponent } from "./components/timestamp.ts";
 import { ToolExecutionComponent } from "./components/tool-execution.ts";
 import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
@@ -658,7 +659,7 @@ export class InteractiveMode {
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
 		this.headerContainer = new Container();
 		this.loadedResourcesContainer = new Container();
-		this.chatContainer = new Container();
+		this.chatContainer = new TimestampGroupComponent();
 		this.documentContainer = new Container();
 		this.documentContainer.addChild(this.headerContainer);
 		this.documentContainer.addChild(this.loadedResourcesContainer);
@@ -3644,6 +3645,7 @@ export class InteractiveMode {
 										outputPad: this.outputPad,
 										outputPadY: this.outputPadY,
 										toolPreviewLines: this.settingsManager.getToolPreviewLines(),
+										timestamp: this.streamingMessage.timestamp,
 									},
 									this.getRegisteredToolDefinition(content.name),
 									this.ui,
@@ -3743,6 +3745,7 @@ export class InteractiveMode {
 							outputPad: this.outputPad,
 							outputPadY: this.outputPadY,
 							toolPreviewLines: this.settingsManager.getToolPreviewLines(),
+							timestamp: this.completedToolOwners.get(event.toolCallId)?.message.timestamp ?? Date.now(),
 						},
 						this.getRegisteredToolDefinition(event.toolName),
 						this.ui,
@@ -4005,6 +4008,7 @@ export class InteractiveMode {
 					message.excludeFromContext,
 					this.outputPad,
 					this.outputPadY,
+					message.timestamp,
 				);
 				if (message.output) {
 					component.appendOutput(message.output);
@@ -4089,6 +4093,7 @@ export class InteractiveMode {
 							this.getMarkdownTransformers(),
 							options?.messageId,
 							options?.timestamp,
+							message.timestamp,
 						);
 						component.setExpanded(this.toolOutputExpanded);
 						destination.addChild(component);
@@ -4103,6 +4108,7 @@ export class InteractiveMode {
 								this.outputPadY,
 								options?.messageId,
 								options?.timestamp,
+								message.timestamp,
 							);
 							destination.addChild(userComponent);
 						}
@@ -4115,6 +4121,7 @@ export class InteractiveMode {
 							this.outputPadY,
 							options?.messageId,
 							options?.timestamp,
+							message.timestamp,
 						);
 						destination.addChild(userComponent);
 					}
@@ -4288,6 +4295,7 @@ export class InteractiveMode {
 					outputPad: this.outputPad,
 					outputPadY: this.outputPadY,
 					toolPreviewLines: this.settingsManager.getToolPreviewLines(),
+					timestamp: unit.message.timestamp,
 				},
 				this.getRegisteredToolDefinition(unit.call.name),
 				this.ui,
@@ -4382,6 +4390,7 @@ export class InteractiveMode {
 								outputPad: this.outputPad,
 								outputPadY: this.outputPadY,
 								toolPreviewLines: this.settingsManager.getToolPreviewLines(),
+								timestamp: message.timestamp,
 							},
 							this.getRegisteredToolDefinition(content.name),
 							this.ui,
@@ -7445,6 +7454,7 @@ export class InteractiveMode {
 		const bindCompleted = (message: BashExecutionMessage, component: BashExecutionComponent): void => {
 			// Recording may precede persistence, or finish after this transcript was replaced.
 			if (this.session === session && this.completedMessageBindings === bindings) {
+				component.setTimestamp(message.timestamp);
 				bindings.set(message, new Map([["message", component]]));
 			}
 		};

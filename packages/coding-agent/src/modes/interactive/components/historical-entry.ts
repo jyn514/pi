@@ -2,6 +2,7 @@ import { type Component, Container, MouseRegion, truncateToWidth, visibleWidth }
 import { stripAnsi } from "../../../utils/ansi.ts";
 import { type ThemeStyle, theme } from "../theme/theme.ts";
 import { type TranscriptUnit, transcriptUnitPreview } from "../transcript-history.ts";
+import { TimestampComponent } from "./timestamp.ts";
 
 /** A cheap heading owns its optional body. Closing never discards an already constructed body. */
 export class HistoricalEntryComponent extends Container {
@@ -77,66 +78,69 @@ export class HistoricalEntryComponent extends Container {
 		this.createBody = createBody;
 		this.onError = onError;
 		this.requestRender = requestRender;
+		const timestamp = new TimestampComponent(
+			unit.kind === "message" || unit.kind === "tool" ? unit.message.timestamp : unit.entry.timestamp,
+			0,
+			undefined,
+			typeof style.bg === "string" ? style.bg : undefined,
+		);
 		let cachedWidth: number | undefined;
 		let cachedLines: string[] | undefined;
-		this.heading = new MouseRegion(
-			{
-				render: (width) => {
-					if (cachedLines && cachedWidth === width) return cachedLines;
-					const marker = ` ${this.expanded ? "▾" : "▸"} `;
-					const markerWidth = visibleWidth(marker);
-					if (historicalPreview && width > markerWidth) {
-						try {
-							const line = historicalPreview.render(width - markerWidth)[0];
-							if (line && stripAnsi(line).trim()) {
-								cachedWidth = width;
-								cachedLines = [
-									theme.fg("customMessageLabel", marker) + truncateToWidth(line, width - markerWidth),
-								];
-								return cachedLines;
-							}
-						} catch {
-							// Match normal custom-message fallback behavior without retrying a broken preview.
-							historicalPreview = undefined;
-						}
-					}
-					const title = `${failed ? "[error] " : ""}${plainLabel}`;
-					const label = `${title}${argumentPreview ? ` ${argumentPreview}` : ""}`;
-					// Keep ANSI and the non-ASCII marker out of ordinary label truncation's ASCII fast path.
-					let text =
-						width >= markerWidth + 3
-							? marker + truncateToWidth(label, width - markerWidth, "...", !!style.bg)
-							: truncateToWidth(marker + label, width, "...", !!style.bg);
-					if (unit.kind === "tool") {
-						text = stripAnsi(text);
-						const titleEnd = marker.length + title.length;
-						text =
-							theme.style(text.slice(0, titleEnd), { bold: true }) + theme.fg("accent", text.slice(titleEnd));
-					}
-					cachedWidth = width;
-					cachedLines = [
-						(prompt ? "\x1b]133;A\x07" : "") +
-							theme.style(text, style) +
-							(prompt ? "\x1b]133;B\x07\x1b]133;C\x07" : ""),
-					];
-					return cachedLines;
-				},
-				invalidate: () => {
-					cachedWidth = undefined;
-					cachedLines = undefined;
+		timestamp.addChild({
+			render: (width) => {
+				if (cachedLines && cachedWidth === width) return cachedLines;
+				const marker = ` ${this.expanded ? "▾" : "▸"} `;
+				const markerWidth = visibleWidth(marker);
+				if (historicalPreview && width > markerWidth) {
 					try {
-						historicalPreview?.invalidate();
+						const line = historicalPreview.render(width - markerWidth)[0];
+						if (line && stripAnsi(line).trim()) {
+							cachedWidth = width;
+							cachedLines = [
+								theme.fg("customMessageLabel", marker) + truncateToWidth(line, width - markerWidth),
+							];
+							return cachedLines;
+						}
 					} catch {
+						// Match normal custom-message fallback behavior without retrying a broken preview.
 						historicalPreview = undefined;
 					}
-				},
+				}
+				const title = `${failed ? "[error] " : ""}${plainLabel}`;
+				const label = `${title}${argumentPreview ? ` ${argumentPreview}` : ""}`;
+				// Keep ANSI and the non-ASCII marker out of ordinary label truncation's ASCII fast path.
+				let text =
+					width >= markerWidth + 3
+						? marker + truncateToWidth(label, width - markerWidth, "...", !!style.bg)
+						: truncateToWidth(marker + label, width, "...", !!style.bg);
+				if (unit.kind === "tool") {
+					text = stripAnsi(text);
+					const titleEnd = marker.length + title.length;
+					text = theme.style(text.slice(0, titleEnd), { bold: true }) + theme.fg("accent", text.slice(titleEnd));
+				}
+				cachedWidth = width;
+				cachedLines = [
+					(prompt ? "\x1b]133;A\x07" : "") +
+						theme.style(text, style) +
+						(prompt ? "\x1b]133;B\x07\x1b]133;C\x07" : ""),
+				];
+				return cachedLines;
 			},
-			(event) => {
-				if (event.type !== "click" || event.button !== "left") return undefined;
-				this.setExpanded(!this.expanded);
-				return { handled: true };
+			invalidate: () => {
+				cachedWidth = undefined;
+				cachedLines = undefined;
+				try {
+					historicalPreview?.invalidate();
+				} catch {
+					historicalPreview = undefined;
+				}
 			},
-		);
+		});
+		this.heading = new MouseRegion(timestamp, (event) => {
+			if (event.type !== "click" || event.button !== "left") return undefined;
+			this.setExpanded(!this.expanded);
+			return { handled: true };
+		});
 		this.addChild(this.heading);
 	}
 

@@ -33,6 +33,7 @@ import { BranchSummaryMessageComponent } from "../src/modes/interactive/componen
 import { CompactionSummaryMessageComponent } from "../src/modes/interactive/components/compaction-summary-message.ts";
 import { CustomEntryComponent } from "../src/modes/interactive/components/custom-entry.ts";
 import { HistoricalEntryComponent } from "../src/modes/interactive/components/historical-entry.ts";
+import { TimestampGroupComponent } from "../src/modes/interactive/components/timestamp.ts";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
@@ -81,7 +82,7 @@ function createHistory(
 		getMarkdownTransformers: () => [],
 		resolveToolRenderers: (_name: string, fallback: () => unknown) => fallback(),
 	};
-	const chatContainer = new Container();
+	const chatContainer = new TimestampGroupComponent();
 	const documentContainer = new Container();
 	documentContainer.addChild(new Text("resources\nabove chat", 0, 0));
 	documentContainer.addChild(chatContainer);
@@ -154,6 +155,60 @@ function tool(id: string, needle: string): AssistantMessage {
 beforeEach(() => initTheme("dark"));
 
 describe("lazy historical transcript", () => {
+	it("groups clocks across resumed historical headings, summaries, and current messages", () => {
+		const { host, sessionManager } = createHistory();
+		const minute = new Date(2020, 0, 2, 9, 7).getTime();
+		const first = sessionManager.appendMessage({ ...userMsg("old prompt"), timestamp: minute });
+		sessionManager.appendMessage({ ...assistantMsg("old answer"), timestamp: minute + 20_000 });
+		sessionManager.appendCompaction("summary", first, 1);
+		sessionManager.appendMessage({ ...userMsg("current prompt"), timestamp: minute + 60_000 });
+		sessionManager.appendMessage({ ...assistantMsg("current answer"), timestamp: minute + 80_000 });
+		host.renderInitialMessages();
+		for (const width of [100, 40, 100]) {
+			const rendered = stripAnsi(host.chatContainer.render(width).join("\n"));
+			expect(rendered.match(/09:07/g)).toHaveLength(1);
+			expect(rendered.match(/09:08/g)).toHaveLength(1);
+		}
+		host.setToolsExpanded(true);
+		const expanded = stripAnsi(host.chatContainer.render(100).join("\n"));
+		expect(expanded.match(/09:07/g)).toHaveLength(1);
+		expect(expanded.match(/09:08/g)).toHaveLength(1);
+	});
+
+	it("uses message clock times for live and resumed tools, not the time of replay", async () => {
+		const { host, sessionManager } = createHistory();
+		const timestamp = new Date(2020, 0, 2, 9, 7, 58).getTime();
+		const message = { ...tool("clock-call", "contents"), timestamp };
+		await host.handleEvent({ type: "message_start", message });
+		await host.handleEvent({
+			type: "message_update",
+			message,
+			assistantMessageEvent: { type: "start", partial: message },
+		});
+		const live = host.pendingTools.get("clock-call")!;
+		expect(stripAnsi(live.render(100).join("\n"))).toContain("09:07");
+		await host.handleEvent({ type: "message_end", message });
+		sessionManager.appendMessage(message);
+		host.renderInitialMessages();
+		const replay = host.chatContainer.children.find((child) => child instanceof ToolExecutionComponent)!;
+		expect(stripAnsi(replay.render(100).join("\n"))).toContain("09:07");
+	});
+
+	it("shows persisted clocks on current messages and compacted headings", () => {
+		const { host, sessionManager, headings } = createHistory();
+		const first = sessionManager.appendMessage({
+			...userMsg("old prompt"),
+			timestamp: new Date(2020, 0, 2, 9, 7).getTime(),
+		});
+		sessionManager.appendMessage({ ...assistantMsg("old answer"), timestamp: new Date(2020, 0, 2, 9, 8).getTime() });
+		sessionManager.appendCompaction("summary", first, 1);
+		sessionManager.appendMessage({ ...userMsg("current prompt"), timestamp: new Date(2020, 0, 2, 9, 9).getTime() });
+		host.renderInitialMessages();
+		expect(stripAnsi(headings()[0].render(100).join("\n"))).toContain("09:07");
+		expect(stripAnsi(headings()[1].render(100).join("\n"))).toContain("09:08");
+		expect(stripAnsi(host.chatContainer.render(100).join("\n"))).toContain("09:09");
+	});
+
 	it("passes persisted metadata to transformers for historical and current messages", () => {
 		const { host, sessionManager, headings, text } = createHistory();
 		const historicalUser = sessionManager.appendMessage(userMsg("historical prompt"));
@@ -197,12 +252,18 @@ describe("lazy historical transcript", () => {
 		);
 		expect(messages).toHaveLength(visible ? 1 : 0);
 		if (visible) {
-			const normal = stripAnsi(
+			const withoutClocks = (rendered: string) =>
+				stripAnsi(rendered)
+					.split("\n")
+					.map((line) => line.replace(/\s+\d{2}:\d{2}\s*$/, "").trimEnd())
+					.join("\n")
+					.trim();
+			const normal = withoutClocks(
 				new AssistantMessageComponent(message, false, undefined, undefined, 0, [], 0).render(100).join("\n"),
-			).trim();
+			);
 			expect(normal).not.toBe("");
 			for (const heading of headings()) heading.setExpanded(true);
-			expect(text()).toContain(normal);
+			expect(withoutClocks(text())).toContain(normal);
 		}
 	});
 
@@ -249,7 +310,11 @@ describe("lazy historical transcript", () => {
 		host.renderInitialMessages();
 		const lines = headings()[0].render(200);
 		expect(lines).toHaveLength(1);
-		expect(stripAnsi(lines[0]).trimEnd()).toBe(` ▸ Assistant${preview ? `: ${preview}` : ""}`);
+		expect(
+			stripAnsi(lines[0])
+				.replace(/\s+\d{2}:\d{2}\s*$/, "")
+				.trimEnd(),
+		).toBe(` ▸ Assistant${preview ? `: ${preview}` : ""}`);
 		expect(construct).not.toHaveBeenCalled();
 	});
 
@@ -307,7 +372,10 @@ describe("lazy historical transcript", () => {
 				for (let row = 0; row < 40; row++) {
 					const line = buffer.getLine(buffer.viewportY + row);
 					if (!line) continue;
-					for (let col = 0; col < 80; col++) {
+					const text = line.translateToString(true);
+					if (/^\s*\d{2}:\d{2}\s*$/.test(text)) continue;
+					const clockStart = text.search(/\s+\d{2}:\d{2}\s*$/);
+					for (let col = 0; col < (clockStart < 0 ? 80 : clockStart); col++) {
 						const cell = line.getCell(col);
 						if (!cell?.getChars().trim()) continue;
 						return {
@@ -359,7 +427,11 @@ describe("lazy historical transcript", () => {
 		host.renderInitialMessages();
 		const lines = headings()[0].render(200);
 		expect(lines).toHaveLength(1);
-		expect(stripAnsi(lines[0]).trimEnd()).toBe(` ▸ some_tool${preview ? ` ${preview}` : ""}`);
+		expect(
+			stripAnsi(lines[0])
+				.replace(/\s+\d{2}:\d{2}\s*$/, "")
+				.trimEnd(),
+		).toBe(` ▸ some_tool${preview ? ` ${preview}` : ""}`);
 		expect(stripAnsi(lines[0])).not.toMatch(/[\x00-\x1f\x7f-\x9f]/);
 		for (const width of [0, 1, 2, 3, 4, 5, 6, 12, 20, 80]) {
 			const narrow = headings()[0].render(width);
@@ -409,7 +481,12 @@ describe("lazy historical transcript", () => {
 				terminal.write(`${heading.render(80).join("\r\n")}\r\n${theme.fg("accent", "preview")}`, resolve),
 			);
 			const line = terminal.buffer.active.getLine(0)!;
-			expect(line.translateToString(true).trimEnd()).toBe(" ▸ write /tmp/result.txt");
+			expect(
+				line
+					.translateToString(true)
+					.replace(/\s+\d{2}:\d{2}\s*$/, "")
+					.trimEnd(),
+			).toBe(" ▸ write /tmp/result.txt");
 			expect(line.getCell(3)!.isBold()).not.toBe(0);
 			expect(line.getCell(9)!.isBold()).toBe(0);
 			const reference = terminal.buffer.active.getLine(1)!.getCell(0)!;
@@ -1083,7 +1160,11 @@ describe("lazy historical transcript", () => {
 		const heading = headings()[0];
 		const lines = heading.render(80);
 		expect(lines).toHaveLength(1);
-		expect(stripAnsi(lines[0]).trimEnd()).toBe(" ▸ ✓ helper completed");
+		expect(
+			stripAnsi(lines[0])
+				.replace(/\s+\d{2}:\d{2}\s*$/, "")
+				.trimEnd(),
+		).toBe(" ▸ ✓ helper completed");
 		heading.render(80);
 		expect(render).toHaveBeenCalledOnce();
 		heading.render(40);
@@ -1489,11 +1570,11 @@ it.each([0, 1] as const)(
 					expect(host.chatContainer.children).toContain(notice);
 					expect(notice.render(100)).toEqual([]);
 				}
-				expect(host.chatContainer.render(100)).toEqual(
-					host.chatContainer.children
-						.filter((child) => !notices.includes(child))
-						.flatMap((child) => child.render(100)),
-				);
+				const withoutNotices = new TimestampGroupComponent();
+				for (const child of host.chatContainer.children) {
+					if (!notices.includes(child)) withoutNotices.addChild(child);
+				}
+				expect(host.chatContainer.render(100)).toEqual(withoutNotices.render(100));
 			}
 		}
 		setCapabilities({ images: null, trueColor: true, hyperlinks: true });

@@ -4,6 +4,7 @@ import type { EntryRenderer } from "../../../core/extensions/types.ts";
 import type { CustomEntry } from "../../../core/session-manager.ts";
 import { theme } from "../theme/theme.ts";
 import { keyHint, keyText } from "./keybinding-hints.ts";
+import { TimestampComponent } from "./timestamp.ts";
 
 /**
  * Component that renders a custom session entry from extensions.
@@ -83,6 +84,8 @@ export class CustomEntryComponent extends Container {
 
 		this.customComponent = component;
 		this.addChild(new Spacer(this.outputPadY));
-		this.addChild(component);
+		const content = new TimestampComponent(this.entry.timestamp, this.outputPad);
+		content.addChild(component);
+		this.addChild(content);
 	}
 }

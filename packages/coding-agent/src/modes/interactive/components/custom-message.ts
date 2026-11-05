@@ -5,6 +5,7 @@ import type { CustomMessage } from "../../../core/messages.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { keyHint, keyText } from "./keybinding-hints.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
+import { TimestampComponent } from "./timestamp.ts";
 
 /**
  * Component that renders a custom message entry from extensions.
@@ -83,7 +84,9 @@ export class CustomMessageComponent extends Container {
 				);
 				if (component) {
 					// Custom renderer provides its own styled component
-					this.addChild(
+					const content = new TimestampComponent(this.message.timestamp, this.outputPad);
+					this.addChild(content);
+					content.addChild(
 						new MouseRegion(component, (event) => {
 							if (event.type !== "click" || event.button !== "left") return undefined;
 							this.setExpanded(!this._expanded);
@@ -101,10 +104,13 @@ export class CustomMessageComponent extends Container {
 		const box = new Box(this.outputPad, this.outputPadY, (text) => theme.bg("customMessageBg", text));
 		this.addChild(box);
 
+		const content = new TimestampComponent(this.message.timestamp, 0, undefined, "customMessageBg");
+		box.addChild(content);
+
 		// Default rendering: label + content
 		const label = theme.fg("customMessageLabel", `\x1b[1m[${this.message.customType}]\x1b[22m`);
-		box.addChild(new Text(label, 0, 0));
-		box.addChild(new Spacer(this.outputPadY));
+		content.addChild(new Text(label, 0, 0));
+		content.addChild(new Spacer(this.outputPadY));
 
 		// Extract text content
 		let text: string;
@@ -117,7 +123,7 @@ export class CustomMessageComponent extends Container {
 				.join("\n");
 		}
 
-		box.addChild(
+		content.addChild(
 			new Markdown(
 				text,
 				0,

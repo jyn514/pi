@@ -2,6 +2,7 @@ import { Container, Markdown, type MarkdownTheme } from "@earendil-works/pi-tui"
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
+import { TimestampComponent } from "./timestamp.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
@@ -18,6 +19,7 @@ export class UserMessageComponent extends Container {
 	private markdownTransformers: readonly MarkdownTransformer[];
 	private messageId?: string;
 	private timestamp?: string;
+	private clockTimestamp: string | number | undefined;
 
 	constructor(
 		text: string,
@@ -27,6 +29,7 @@ export class UserMessageComponent extends Container {
 		outputPadY: 0 | 1 = 1,
 		messageId?: string,
 		timestamp?: string,
+		clockTimestamp: string | number | undefined = timestamp,
 	) {
 		super();
 		this.text = text;
@@ -36,6 +39,7 @@ export class UserMessageComponent extends Container {
 		this.markdownTransformers = markdownTransformers;
 		this.messageId = messageId;
 		this.timestamp = timestamp;
+		this.clockTimestamp = clockTimestamp;
 		this.rebuild();
 	}
 
@@ -51,9 +55,16 @@ export class UserMessageComponent extends Container {
 
 	private rebuild(): void {
 		this.clear();
+		const content = new TimestampComponent(
+			this.clockTimestamp,
+			this.outputPad,
+			(text) => theme.bg("userMessageBg", text),
+			"userMessageBg",
+		);
+		this.addChild(content);
 		// The Markdown pads and colors its own background: a Box around it would keep a second full-width copy of every
 		// line, with identical output.
-		this.addChild(
+		content.addChild(
 			new Markdown(
 				this.text,
 				this.outputPad,

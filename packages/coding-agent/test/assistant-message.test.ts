@@ -34,6 +34,15 @@ function createAssistantMessage(
 	};
 }
 
+/** Spacing assertions concern message content, not its clock label. */
+function contentLines(component: AssistantMessageComponent, width: number): string[] {
+	return component.render(width).map((line) =>
+		stripAnsi(line)
+			.replace(/\s+\d{2}:\d{2}\s*$/, "")
+			.trimEnd(),
+	);
+}
+
 describe("AssistantMessageComponent", () => {
 	afterEach(() => vi.restoreAllMocks());
 
@@ -83,8 +92,8 @@ describe("AssistantMessageComponent", () => {
 		const padded = new AssistantMessageComponent(message);
 		const compact = new AssistantMessageComponent(message, false, undefined, "Thinking...", 1, [], 0);
 
-		expect(padded.render(40)).toHaveLength(2);
-		expect(compact.render(40)).toHaveLength(1);
+		expect(contentLines(padded, 40)).toHaveLength(2);
+		expect(contentLines(compact, 40)).toHaveLength(1);
 	});
 
 	test("removes spacing between thinking summaries and text in compact mode", () => {
@@ -95,7 +104,7 @@ describe("AssistantMessageComponent", () => {
 			{ type: "text", text: "answer" },
 		]);
 		const component = new AssistantMessageComponent(message, false, undefined, "Thinking...", 1, [], 0);
-		const lines = component.render(80).map((line) => stripAnsi(line));
+		const lines = contentLines(component, 80);
 
 		expect(lines).toHaveLength(3);
 		expect(lines[0]).toContain("first summary");
@@ -107,14 +116,14 @@ describe("AssistantMessageComponent", () => {
 		initTheme("dark");
 		const message = createAssistantMessage([{ type: "thinking", thinking: "first paragraph\n\nsecond paragraph" }]);
 		const compact = new AssistantMessageComponent(message, false, undefined, "Thinking...", 1, [], 0);
-		const lines = compact.render(80).map((line) => stripAnsi(line));
+		const lines = contentLines(compact, 80);
 
 		expect(lines).toHaveLength(2);
 		expect(lines[0]).toContain("first paragraph");
 		expect(lines[1]).toContain("second paragraph");
 
 		const padded = new AssistantMessageComponent(message);
-		expect(padded.render(80)).toHaveLength(4);
+		expect(contentLines(padded, 80)).toHaveLength(4);
 	});
 
 	test("does not add OSC 133 zone markers when assistant message contains tool calls", () => {
@@ -190,7 +199,7 @@ describe("AssistantMessageComponent", () => {
 			undefined,
 			"",
 		);
-		expect(withText.render(80).map((line) => stripAnsi(line).trim())).toEqual(["", "answer"]);
+		expect(contentLines(withText, 80).map((line) => line.trim())).toEqual(["", "answer"]);
 	});
 
 	test("keeps label row and spacing for hidden thinking with a label", () => {
@@ -203,7 +212,7 @@ describe("AssistantMessageComponent", () => {
 			]),
 			true,
 		);
-		expect(component.render(80).map((line) => stripAnsi(line).trim())).toEqual(["", "Thinking...", "", "answer"]);
+		expect(contentLines(component, 80).map((line) => line.trim())).toEqual(["", "Thinking...", "", "answer"]);
 	});
 
 	test("collapses individual thinking runs when clicked", () => {
@@ -286,7 +295,7 @@ describe("AssistantMessageComponent", () => {
 		const component = new AssistantMessageComponent(message, false, undefined, "Thinking...", 1, [
 			(markdown, context) => {
 				calls.push("formula");
-				expect(context).toEqual({ messageType: "assistant", isStreaming: false, availableWidth: 78 });
+				expect(context).toEqual({ messageType: "assistant", isStreaming: false, availableWidth: 72 });
 				return markdown.replace("$x^2$", "x²");
 			},
 			(markdown) => {
@@ -335,10 +344,10 @@ describe("AssistantMessageComponent", () => {
 			],
 		);
 
-		expect(stripAnsi(component.render(80).join("\n"))).toContain("answer (78)");
+		expect(stripAnsi(component.render(80).join("\n"))).toContain("answer (72)");
 		component.render(80);
-		expect(stripAnsi(component.render(60).join("\n"))).toContain("answer (58)");
-		expect(availableWidths).toEqual([78, 58]);
+		expect(stripAnsi(component.render(60).join("\n"))).toContain("answer (52)");
+		expect(availableWidths).toEqual([72, 52]);
 	});
 
 	test("continues the Markdown transformer chain when a transformer throws", () => {

@@ -21,6 +21,11 @@ To include files or images:
 ## Follow Pi's work
 
 Pi shows each tool call and result while it works.
+Transcript entries show a local `HH:mm` clock at the top right on the first entry and whenever the minute changes.
+Resumed sessions use the recorded times.
+Clocks keep the component's background, use contrasting black or white text on grey panels, and do not inherit message text styling.
+Thinking and text within one assistant message share its clock; tool calls use the clock of their containing assistant message.
+Shell commands entered with `!` or `!!` show their start time while running and their recorded result time when finished.
 Press `Ctrl+O` to expand or collapse tool output.
 To hide collapsed tool-result text previews, set `"toolPreviewLines": 0` in `~/.pi/agent/settings.json` and run `/reload`.
 A positive number sets the result preview length; removing the setting restores tool defaults.

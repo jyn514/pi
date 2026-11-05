@@ -17,8 +17,9 @@ export type { ToolRenderers };
 
 import { formatToolCallWithArgs, getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
 import { ensurePngTranscoder } from "../../../utils/image-convert.ts";
-import { theme } from "../theme/theme.ts";
+import { type ThemeBg, theme } from "../theme/theme.ts";
 import { keyHint, keyText } from "./keybinding-hints.ts";
+import { TimestampComponent } from "./timestamp.ts";
 
 const FALLBACK_PREVIEW_LINES = 10;
 
@@ -28,9 +29,12 @@ export interface ToolExecutionOptions {
 	outputPad?: number;
 	outputPadY?: 0 | 1;
 	toolPreviewLines?: number;
+	/** Timestamp of the assistant message containing this call (Unix milliseconds). */
+	timestamp?: number;
 }
 
 export class ToolExecutionComponent extends Container {
+	private timestampComponent: TimestampComponent;
 	private contentBox: Box;
 	private contentText: Text;
 	private contentTextRegion: MouseRegion;
@@ -91,6 +95,7 @@ export class ToolExecutionComponent extends Container {
 		this.cwd = cwd;
 
 		this.addChild(new Spacer(this.outputPadY));
+		this.timestampComponent = new TimestampComponent(options.timestamp, this.outputPad);
 
 		// Always create all shell variants. contentBox is used for default renderer-based composition.
 		// selfRenderContainer is used when the tool renders its own framing.
@@ -102,9 +107,15 @@ export class ToolExecutionComponent extends Container {
 		this.selfRenderContainer = new Container();
 
 		if (this.hasRendererDefinition()) {
-			this.addChild(this.getRenderShell() === "self" ? this.selfRenderContainer : this.contentBox);
+			if (this.getRenderShell() === "self") {
+				this.timestampComponent.addChild(this.selfRenderContainer);
+				this.addChild(this.timestampComponent);
+			} else {
+				this.addChild(this.contentBox);
+			}
 		} else {
-			this.addChild(this.contentTextRegion);
+			this.timestampComponent.addChild(this.contentTextRegion);
+			this.addChild(this.timestampComponent);
 		}
 
 		this.updateDisplay();
@@ -227,6 +238,7 @@ export class ToolExecutionComponent extends Container {
 
 	setOutputPad(outputPad: number): void {
 		this.outputPad = outputPad;
+		this.timestampComponent.setPadding(outputPad);
 		this.updateDisplay();
 	}
 
@@ -261,7 +273,7 @@ export class ToolExecutionComponent extends Container {
 		}
 
 		if (this.hasRendererDefinition() && this.getRenderShell() === "self") {
-			const contentLines = this.selfRenderContainer.render(width);
+			const contentLines = this.timestampComponent.render(width);
 			this.selfRenderHeight = contentLines.length;
 			if (contentLines.length === 0 && this.imageComponents.length === 0) {
 				return [];
@@ -292,21 +304,26 @@ export class ToolExecutionComponent extends Container {
 
 	override handleMouse(event: TuiMouseEvent): ReturnType<Container["handleMouse"]> {
 		if (!this.hasRendererDefinition() || this.getRenderShell() !== "self") return super.handleMouse(event);
-		if (event.y < this.outputPadY || event.y >= this.selfRenderHeight + this.outputPadY) return undefined;
-		return this.selfRenderContainer.handleMouse({
+		const contentOffset = this.outputPadY;
+		if (event.y < contentOffset || event.y >= this.selfRenderHeight + contentOffset) return undefined;
+		return this.timestampComponent.handleMouse({
 			...event,
-			y: event.y - this.outputPadY,
+			y: event.y - contentOffset,
 			height: this.selfRenderHeight,
 		});
 	}
 
 	private updateDisplay(): void {
 		this.argsPending = false;
-		const bgFn = this.isPartial
-			? (text: string) => theme.bg("toolPendingBg", text)
+		const background: ThemeBg = this.isPartial
+			? "toolPendingBg"
 			: this.result?.isError
-				? (text: string) => theme.bg("toolErrorBg", text)
-				: (text: string) => theme.bg("toolSuccessBg", text);
+				? "toolErrorBg"
+				: "toolSuccessBg";
+		const bgFn = (text: string) => theme.bg(background, text);
+		this.timestampComponent.setBackgroundColor(
+			this.hasRendererDefinition() && this.getRenderShell() === "self" ? undefined : background,
+		);
 
 		let hasContent = false;
 		this.hideComponent = false;
@@ -317,20 +334,26 @@ export class ToolExecutionComponent extends Container {
 				renderContainer.setPaddingX(this.outputPad);
 			}
 			renderContainer.clear();
+			if (renderContainer === this.contentBox) {
+				this.timestampComponent.clear();
+				this.contentBox.addChild(this.timestampComponent);
+			}
+
+			const content = renderContainer === this.contentBox ? this.timestampComponent : renderContainer;
 
 			const callRenderer = this.getCallRenderer();
 			if (!callRenderer) {
-				renderContainer.addChild(this.createResultRegion(this.createCallFallback()));
+				content.addChild(this.createResultRegion(this.createCallFallback()));
 				hasContent = true;
 			} else {
 				try {
 					const component = callRenderer(this.args, theme, this.getRenderContext(this.callRendererComponent));
 					this.callRendererComponent = component;
-					renderContainer.addChild(this.createResultRegion(component));
+					content.addChild(this.createResultRegion(component));
 					hasContent = true;
 				} catch {
 					this.callRendererComponent = undefined;
-					renderContainer.addChild(this.createResultRegion(this.createCallFallback()));
+					content.addChild(this.createResultRegion(this.createCallFallback()));
 					hasContent = true;
 				}
 			}
@@ -340,7 +363,7 @@ export class ToolExecutionComponent extends Container {
 				if (!resultRenderer) {
 					const component = this.createResultFallback();
 					if (component) {
-						renderContainer.addChild(this.createResultRegion(component));
+						content.addChild(this.createResultRegion(component));
 						hasContent = true;
 					}
 				} else {
@@ -352,13 +375,13 @@ export class ToolExecutionComponent extends Container {
 							this.getRenderContext(this.resultRendererComponent),
 						);
 						this.resultRendererComponent = component;
-						renderContainer.addChild(this.createResultRegion(component));
+						content.addChild(this.createResultRegion(component));
 						hasContent = true;
 					} catch {
 						this.resultRendererComponent = undefined;
 						const component = this.createResultFallback();
 						if (component) {
-							renderContainer.addChild(this.createResultRegion(component));
+							content.addChild(this.createResultRegion(component));
 							hasContent = true;
 						}
 					}

@@ -1,9 +1,10 @@
-import { Box, Container, Markdown, type MarkdownTheme, MouseRegion, Text } from "@earendil-works/pi-tui";
+import { Box, Markdown, type MarkdownTheme, MouseRegion, Text } from "@earendil-works/pi-tui";
 import type { ParsedSkillBlock } from "../../../core/agent-session.ts";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { keyText } from "./keybinding-hints.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
+import { TimestampComponent } from "./timestamp.ts";
 
 /**
  * Component that renders a skill invocation message with collapsed/expanded state.
@@ -17,6 +18,7 @@ export class SkillInvocationMessageComponent extends Box {
 	private markdownTransformers: readonly MarkdownTransformer[];
 	private messageId?: string;
 	private timestamp?: string;
+	private clockTimestamp: string | number | undefined;
 
 	constructor(
 		skillBlock: ParsedSkillBlock,
@@ -25,6 +27,7 @@ export class SkillInvocationMessageComponent extends Box {
 		markdownTransformers: readonly MarkdownTransformer[] = [],
 		messageId?: string,
 		timestamp?: string,
+		clockTimestamp: string | number | undefined = timestamp,
 	) {
 		super(outputPad, 1, (t) => theme.bg("customMessageBg", t));
 		this.skillBlock = skillBlock;
@@ -32,6 +35,7 @@ export class SkillInvocationMessageComponent extends Box {
 		this.markdownTransformers = markdownTransformers;
 		this.messageId = messageId;
 		this.timestamp = timestamp;
+		this.clockTimestamp = clockTimestamp;
 		this.updateDisplay();
 	}
 
@@ -51,7 +55,7 @@ export class SkillInvocationMessageComponent extends Box {
 
 	private updateDisplay(): void {
 		this.clear();
-		const content = new Container();
+		const content = new TimestampComponent(this.clockTimestamp, 0, undefined, "customMessageBg");
 
 		if (this.expanded) {
 			// Expanded: label + skill name header + full content

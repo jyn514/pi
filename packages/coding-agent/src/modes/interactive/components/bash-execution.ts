@@ -13,6 +13,7 @@ import { stripAnsi } from "../../../utils/ansi.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, keyText } from "./keybinding-hints.ts";
+import { TimestampComponent } from "./timestamp.ts";
 import { truncateToVisualLines } from "./visual-truncate.ts";
 
 // Preview line limit when not expanded (matches tool execution behavior)
@@ -27,13 +28,20 @@ export class BashExecutionComponent extends Container {
 	private truncationResult?: TruncationResult;
 	private fullOutputPath?: string;
 	private expanded = false;
-	private contentContainer: Container;
+	private contentContainer: TimestampComponent;
 	/** `dim` marks `!!` commands, whose output is excluded from the model context. */
 	private readonly colorKey: "dim" | "bashMode";
 	private outputPad: number;
 	private outputPadY: 0 | 1;
 
-	constructor(command: string, ui: TUI, excludeFromContext = false, outputPad = 1, outputPadY: 0 | 1 = 1) {
+	constructor(
+		command: string,
+		ui: TUI,
+		excludeFromContext = false,
+		outputPad = 1,
+		outputPadY: 0 | 1 = 1,
+		timestamp = Date.now(),
+	) {
 		super();
 		this.command = command;
 		this.colorKey = excludeFromContext ? "dim" : "bashMode";
@@ -48,7 +56,7 @@ export class BashExecutionComponent extends Container {
 		this.addChild(new DynamicBorder(borderColor));
 
 		// Content container (holds dynamic content between borders)
-		this.contentContainer = new Container();
+		this.contentContainer = new TimestampComponent(timestamp, this.outputPad);
 		this.addChild(this.contentContainer);
 
 		this.loader = new Loader(
@@ -64,6 +72,11 @@ export class BashExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	/** Replace the provisional start clock with the recorded result time so replay shows the same clock. */
+	setTimestamp(timestamp: number): void {
+		this.contentContainer.setTimestamp(timestamp);
+	}
+
 	/**
 	 * Set whether the output is expanded (shows full output) or collapsed (preview only).
 	 */
@@ -74,6 +87,7 @@ export class BashExecutionComponent extends Container {
 
 	setOutputPad(outputPad: number): void {
 		this.outputPad = outputPad;
+		this.contentContainer.setPadding(outputPad);
 		this.updateDisplay();
 	}
 
