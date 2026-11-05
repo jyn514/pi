@@ -3,11 +3,15 @@ import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { readBuildCommit } from "../packages/coding-agent/src/utils/build-commit.ts";
 
 const { values } = parseArgs({
 	options: { outfile: { type: "string" }, target: { type: "string" } },
 });
 if (!values.outfile) throw new Error("Usage: node scripts/build-coding-agent-binary.mjs --outfile <path> [--target <bun-target>]");
+
+const packageDir = fileURLToPath(new URL("../packages/coding-agent", import.meta.url));
+const commit = readBuildCommit(packageDir) ?? "";
 
 const result = spawnSync("bun", [
 	"build", "--compile", "--bytecode",
@@ -18,6 +22,7 @@ const result = spawnSync("bun", [
 	// Project env files must not leak into Pi's environment (#10473).
 	"--no-compile-autoload-dotenv",
 	"--define", "PI_BUNDLED_BUN=true",
+	"--define", `PI_BUILD_COMMIT=${JSON.stringify(commit)}`,
 	...(values.target ? ["--target", values.target] : []),
 	"./dist/bun/cli.js",
 	// Workers must be explicit entrypoints to be embedded in the executable.
@@ -25,7 +30,7 @@ const result = spawnSync("bun", [
 	"./src/extensions/codemode/worker.ts",
 	"--outfile", resolve(values.outfile),
 ], {
-	cwd: fileURLToPath(new URL("../packages/coding-agent", import.meta.url)),
+	cwd: packageDir,
 	encoding: "utf8",
 	maxBuffer: 16 * 1024 * 1024,
 	stdio: ["inherit", "pipe", "pipe"],

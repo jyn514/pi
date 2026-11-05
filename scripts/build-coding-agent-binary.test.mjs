@@ -22,11 +22,13 @@ test("compiles import-only bytecode without loading cwd dotenv", (t) => {
 			mkdirSync(path, { recursive: true });
 		}
 		copyFileSync(driver, join(scripts, "build-coding-agent-binary.mjs"));
+		copyFileSync(fileURLToPath(new URL("../packages/coding-agent/src/utils/build-commit.ts", import.meta.url)), join(agent, "src/utils/build-commit.ts"));
+		writeFileSync(join(agent, "dist/commit"), "abcdef12\n");
 		writeFileSync(join(agent, "node_modules/resolution-fixture/package.json"), JSON.stringify({
 			name: "resolution-fixture", type: "module", exports: { import: "./index.js" },
 		}));
 		writeFileSync(join(agent, "node_modules/resolution-fixture/index.js"), "export const value = 42;\n");
-		writeFileSync(join(agent, "dist/bun/cli.js"), 'import { value } from "resolution-fixture";\nconsole.log(value, import.meta.resolve("node:fs"), process.env.PI_BYTECODE_TEST_DOTENV ?? "unset");\n');
+		writeFileSync(join(agent, "dist/bun/cli.js"), 'import { value } from "resolution-fixture";\nconsole.log(value, import.meta.resolve("node:fs"), process.env.PI_BYTECODE_TEST_DOTENV ?? "unset", PI_BUILD_COMMIT);\n');
 		writeFileSync(join(directory, ".env"), "PI_BYTECODE_TEST_DOTENV=leaked\n");
 		writeFileSync(join(agent, "src/utils/image-resize-worker.ts"), "export {};\n");
 		writeFileSync(join(agent, "src/extensions/codemode/worker.ts"), "export {};\n");
@@ -41,7 +43,7 @@ test("compiles import-only bytecode without loading cwd dotenv", (t) => {
 			encoding: "utf8", timeout: 30000,
 		});
 		assert.equal(run.status, 0, run.stderr);
-		assert.equal(run.stdout.trim(), "42 node:fs unset");
+		assert.equal(run.stdout.trim(), "42 node:fs unset abcdef12");
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
 	}

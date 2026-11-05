@@ -34,6 +34,12 @@ describe("version checks", () => {
 		expect(isNewerPackageVersion("0.70.6", "0.70.5")).toBe(true);
 	});
 
+	it("ignores commit metadata when deciding whether a release is newer", () => {
+		expect(isNewerPackageVersion("1.2.3", "1.2.3+abcdef12")).toBe(false);
+		expect(isNewerPackageVersion("1.2.3+12345678", "1.2.3+abcdef12")).toBe(false);
+		expect(isNewerPackageVersion("1.2.4", "1.2.3+abcdef12")).toBe(true);
+	});
+
 	it("returns only newer versions", async () => {
 		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.3" }));
 		vi.stubGlobal("fetch", fetchMock);

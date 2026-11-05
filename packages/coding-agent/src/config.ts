@@ -3,6 +3,7 @@ import { createRequire } from "module";
 import { homedir } from "os";
 import { basename, dirname, join, resolve, sep, win32 } from "path";
 import { fileURLToPath } from "url";
+import { getSourceCommit, readBuildCommit } from "./utils/build-commit.ts";
 import { spawnProcessSync } from "./utils/child-process.ts";
 import { normalizePath } from "./utils/paths.ts";
 import { stripBom } from "./utils/text.ts";
@@ -554,7 +555,8 @@ export type InstallChange = { kind: "updated"; version: string } | { kind: "remo
  * Detect that the package this process runs from changed on disk, for example after `pi update`
  * in another terminal. Code loaded on demand can then be missing or from another version.
  *
- * Checks the package.json read at startup. Resolving it again would walk up past a deleted install
+ * Compares the release version and commit from the install selected at startup.
+ * Resolving package.json again would walk up past a deleted install
  * and could find an unrelated package.json, such as one in the home directory.
  */
 export function detectInstallChange(packageJsonPath = startupPackageJsonPath): InstallChange | undefined {
@@ -566,9 +568,9 @@ export function detectInstallChange(packageJsonPath = startupPackageJsonPath): I
 	} catch (error) {
 		return (error as NodeJS.ErrnoException).code === "ENOENT" ? { kind: "removed" } : undefined;
 	}
-	return installed.version && installed.version !== VERSION
-		? { kind: "updated", version: installed.version }
-		: undefined;
+	if (!installed.version) return undefined;
+	const version = getInstalledVersion(installed.version, dirname(packageJsonPath));
+	return version !== VERSION ? { kind: "updated", version } : undefined;
 }
 
 // =============================================================================
@@ -601,7 +603,20 @@ export const PACKAGE_NAME: string = pkg.name || "@earendil-works/pi-coding-agent
 export const APP_NAME: string = piConfigName || "pi";
 export const APP_TITLE: string = piConfigName ? APP_NAME : "π";
 export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".pi";
-export const VERSION: string = pkg.version || "0.0.0";
+/** Embedded in standalone binaries; Node installs read the build stamp instead. */
+declare const PI_BUILD_COMMIT: string;
+
+function getInstalledVersion(version: string, packageDir: string): string {
+	const commit =
+		isBunBinary && typeof PI_BUILD_COMMIT !== "undefined"
+			? PI_BUILD_COMMIT
+			: !isBundledNode && basename(__dirname) === "src"
+				? getSourceCommit(packageDir)
+				: readBuildCommit(packageDir);
+	return commit ? `${version}${version.includes("+") ? "." : "+"}${commit}` : version;
+}
+
+export const VERSION: string = getInstalledVersion(pkg.version || "0.0.0", getPackageDir());
 
 // e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;

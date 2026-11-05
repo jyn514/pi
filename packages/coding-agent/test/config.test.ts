@@ -1,7 +1,10 @@
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { build } from "esbuild";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { delimiter, join } from "path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
 	detectInstallChange,
 	detectInstallMethod,
@@ -11,7 +14,9 @@ import {
 	getSelfUpdateUnavailableInstruction,
 	getUpdateInstruction,
 	makeConfiguredSelfUpdateCommand,
+	VERSION,
 } from "../src/config.ts";
+import * as buildCommit from "../src/utils/build-commit.ts";
 
 const execPathDescriptor = Object.getOwnPropertyDescriptor(process, "execPath");
 const originalPath = process.env.PATH;
@@ -27,6 +32,7 @@ function setExecPath(value: string): void {
 }
 
 afterEach(() => {
+	vi.restoreAllMocks();
 	if (execPathDescriptor) {
 		Object.defineProperty(process, "execPath", execPathDescriptor);
 	}
@@ -481,6 +487,83 @@ describe("detectInstallMethod", () => {
 });
 
 describe("detectInstallChange", () => {
+	test("installed Node builds detect a replacement commit without Git", async () => {
+		tempDir = mkdtempSync(join(tmpdir(), "pi-built-version-"));
+		const dist = join(tempDir, "dist");
+		mkdirSync(dist);
+		writeFileSync(join(tempDir, "package.json"), JSON.stringify({ version: "4.5.6" }));
+		writeFileSync(join(dist, "commit"), "abcdef12\n");
+		await build({
+			entryPoints: [fileURLToPath(new URL("../src/config.ts", import.meta.url))],
+			outfile: join(dist, "config.mjs"),
+			bundle: true,
+			platform: "node",
+			format: "esm",
+			define: { PI_BUNDLED_NODE: "true" },
+			banner: {
+				js: 'import { createRequire as __piCreateRequire } from "node:module"; const require = __piCreateRequire(import.meta.url);',
+			},
+		});
+		writeFileSync(
+			join(dist, "probe.mjs"),
+			`
+import { writeFileSync } from "node:fs";
+import { VERSION, detectInstallChange } from "./config.mjs";
+console.log(JSON.stringify({ version: VERSION, change: detectInstallChange() ?? null }));
+writeFileSync(new URL("./commit", import.meta.url), "12345678\\n");
+console.log(JSON.stringify({ version: VERSION, change: detectInstallChange() }));
+`,
+		);
+		const result = spawnSync(process.execPath, [join(dist, "probe.mjs")], {
+			encoding: "utf8",
+			env: { ...process.env, PI_PACKAGE_DIR: tempDir, PATH: "" },
+		});
+		expect(result.status, result.stderr).toBe(0);
+		expect(
+			result.stdout
+				.trim()
+				.split("\n")
+				.map((line) => JSON.parse(line)),
+		).toEqual([
+			{ version: "4.5.6+abcdef12", change: null },
+			{ version: "4.5.6+abcdef12", change: { kind: "updated", version: "4.5.6+12345678" } },
+		]);
+	});
+
+	test("does not report an unchanged release and commit", () => {
+		tempDir = mkdtempSync(join(tmpdir(), "pi-install-change-"));
+		const [version, commit] = VERSION.split("+");
+		writeFileSync(join(tempDir, "package.json"), JSON.stringify({ version }));
+		vi.spyOn(buildCommit, "getSourceCommit").mockReturnValue(commit);
+
+		expect(detectInstallChange(join(tempDir, "package.json"))).toBeUndefined();
+	});
+
+	test("reports a commit change without a release version change", () => {
+		tempDir = mkdtempSync(join(tmpdir(), "pi-install-change-"));
+		const [version, commit] = VERSION.split("+");
+		const updatedCommit = commit === "abcdef12" ? "12345678" : "abcdef12";
+		writeFileSync(join(tempDir, "package.json"), JSON.stringify({ version }));
+		vi.spyOn(buildCommit, "getSourceCommit").mockReturnValue(updatedCommit);
+
+		expect(detectInstallChange(join(tempDir, "package.json"))).toEqual({
+			kind: "updated",
+			version: `${version}+${updatedCommit}`,
+		});
+	});
+
+	test("reports a release change with an unchanged commit", () => {
+		tempDir = mkdtempSync(join(tmpdir(), "pi-install-change-"));
+		const commit = VERSION.split("+")[1];
+		writeFileSync(join(tempDir, "package.json"), JSON.stringify({ version: "999.0.0" }));
+		vi.spyOn(buildCommit, "getSourceCommit").mockReturnValue(commit);
+
+		expect(detectInstallChange(join(tempDir, "package.json"))).toEqual({
+			kind: "updated",
+			version: commit ? `999.0.0+${commit}` : "999.0.0",
+		});
+	});
+
 	// Regression test for #10439: a deleted pnpm install must not fall back to a package.json further up.
 	test("reports a removed install instead of reading a package.json further up", () => {
 		tempDir = mkdtempSync(join(tmpdir(), "pi-install-change-"));
