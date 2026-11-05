@@ -187,6 +187,8 @@ export { TuiAltScreen, type TuiAltScreenOptions } from "./tui-alt-screen.ts";
 export { TuiMainScreen, type TuiMainScreenRenderState } from "./tui-main-screen.ts";
 // Utilities
 export {
+	getActiveBackgroundAnsi,
+	getBackgroundAtColumn,
 	getOsc8LinkAtColumn,
 	replaceControlCharacters,
 	sliceByColumn,

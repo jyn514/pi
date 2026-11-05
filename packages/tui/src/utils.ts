@@ -1,4 +1,5 @@
 import { eastAsianWidth } from "get-east-asian-width";
+import { type Color, indexedColor, rgbColor } from "./colors.ts";
 
 // segmenters (shared instance)
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -840,6 +841,26 @@ export function getActiveBackgroundAnsi(text: string): string {
 	const tracker = new AnsiCodeTracker();
 	updateTrackerFromText(text, tracker);
 	return tracker.getActiveBackgroundCode();
+}
+
+/** Return a column's explicit background and color, excluding resets after that cell; default backgrounds are undefined. */
+export function getBackgroundAtColumn(text: string, column: number): { ansi: string; color: Color } | undefined {
+	const ansi = getActiveBackgroundAnsi(sliceByColumn(text, 0, column + 1));
+	if (!ansi) return undefined;
+	const [code, mode, first, second, third] = ansi.slice(2, -1).split(";").map(Number);
+	let color: Color;
+	// ANSI output is a trust boundary: the tracker recognizes color codes but does not validate their channels.
+	if (code === 48 && mode === 2) {
+		if (![first, second, third].every((channel) => Number.isInteger(channel) && channel >= 0 && channel <= 255)) {
+			return undefined;
+		}
+		color = rgbColor(first, second, third);
+	} else {
+		const index = code === 48 ? first : code >= 100 ? code - 92 : code - 40;
+		if (!Number.isInteger(index) || index < 0 || index > 255) return undefined;
+		color = indexedColor(index);
+	}
+	return { ansi, color };
 }
 
 function* graphemeSegments(text: string): Generator<string> {

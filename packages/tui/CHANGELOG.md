@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `getBackgroundAtColumn()` and exported `getActiveBackgroundAnsi()` so composed components can preserve renderer-supplied backgrounds.
+
 ### Fixed
 
 - Fixed Markdown rendering HTML comments (`<!-- ... -->`) as visible text ([#11710](https://github.com/earendil-works/pi/issues/11710))
