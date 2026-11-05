@@ -153,6 +153,7 @@ export type {
 	ReadToolCallEvent,
 	RegisteredCommand,
 	RegisteredTool,
+	ReloadCompletionHandler,
 	ResolvedCommand,
 	ResolvedSkillCommand,
 	ResourcesDiscoverEvent,

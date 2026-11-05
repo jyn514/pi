@@ -410,6 +410,9 @@ export class ExtensionRunner {
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
 	private switchSessionHandler: SwitchSessionHandler = async () => ({ cancelled: false });
 	private reloadHandler: ReloadHandler = async () => {};
+	private requestReloadHandler: ExtensionCommandContext["requestReload"] = async () => {
+		throw new Error("Queued reload is not available in this context");
+	};
 	private shutdownHandler: ShutdownHandler = () => {};
 	private shortcutDiagnostics: ResourceDiagnostic[] = [];
 	private commandDiagnostics: ResourceDiagnostic[] = [];
@@ -594,6 +597,7 @@ export class ExtensionRunner {
 			this.navigateTreeHandler = actions.navigateTree;
 			this.switchSessionHandler = actions.switchSession;
 			this.reloadHandler = actions.reload;
+			this.requestReloadHandler = actions.requestReload;
 			return;
 		}
 
@@ -603,6 +607,9 @@ export class ExtensionRunner {
 		this.navigateTreeHandler = async () => ({ cancelled: false });
 		this.switchSessionHandler = async () => ({ cancelled: false });
 		this.reloadHandler = async () => {};
+		this.requestReloadHandler = async () => {
+			throw new Error("Queued reload is not available in this context");
+		};
 	}
 
 	setUIContext(uiContext?: ExtensionUIContext, mode: ExtensionMode = "print"): void {
@@ -1124,6 +1131,11 @@ export class ExtensionRunner {
 		context.reload = () => {
 			this.assertActive();
 			return this.reloadHandler();
+		};
+		context.requestReload = (onComplete) => {
+			this.assertActive();
+			this.assertOutsideHandler("requestReload");
+			return this.requestReloadHandler(onComplete);
 		};
 		return context;
 	}

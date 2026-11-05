@@ -18,6 +18,7 @@ import {
 import { ExtensionRunner, emitProjectTrustEvent } from "../src/core/extensions/runner.ts";
 import type {
 	ExtensionActions,
+	ExtensionCommandContext,
 	ExtensionContextActions,
 	ExtensionFactory,
 	ExtensionUIContext,
@@ -1331,6 +1332,31 @@ describe("ExtensionRunner", () => {
 	});
 
 	describe("command context", () => {
+		it("rejects queued reloads from an awaited lifecycle handler", async () => {
+			const runtime = createExtensionRuntime();
+			let commandContext: ExtensionCommandContext;
+			const extension = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("session_start", async () => {
+						await commandContext.requestReload(() => {});
+					});
+				},
+				tempDir,
+				createEventBus(),
+				runtime,
+			);
+			const runner = new ExtensionRunner([extension], runtime, tempDir, sessionManager, modelRegistry);
+			commandContext = runner.createCommandContext();
+			const errors: string[] = [];
+			runner.onError((error) => errors.push(error.error));
+
+			await runner.emit({ type: "session_start", reason: "startup" });
+
+			expect(errors).toEqual([
+				expect.stringContaining("requestReload cannot run from an awaited session_start handler"),
+			]);
+		});
+
 		it("passes fork options through to the bound handler", async () => {
 			const runtime = createExtensionRuntime();
 			const runner = new ExtensionRunner([], runtime, tempDir, sessionManager, modelRegistry);
@@ -1342,6 +1368,7 @@ describe("ExtensionRunner", () => {
 				fork,
 				navigateTree: async () => ({ cancelled: false }),
 				switchSession: async () => ({ cancelled: false }),
+				requestReload: async () => {},
 				reload: async () => {},
 			});
 

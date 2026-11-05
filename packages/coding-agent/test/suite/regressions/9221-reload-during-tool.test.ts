@@ -65,6 +65,7 @@ describe("reload during an active session operation", () => {
 					navigateTree: (targetId, options) => h.session.navigateTree(targetId, options),
 					switchSession: async () => ({ cancelled: true }),
 					// Match RPC's ctx.reload binding to the core reload entry point.
+					requestReload: async () => {},
 					reload: () => h.session.reload(),
 				},
 			});

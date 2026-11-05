@@ -146,6 +146,7 @@ export type {
 	// Commands
 	RegisteredCommand,
 	RegisteredTool,
+	ReloadCompletionHandler,
 	ReplacedSessionContext,
 	ResolvedCommand,
 	ResolvedSkillCommand,

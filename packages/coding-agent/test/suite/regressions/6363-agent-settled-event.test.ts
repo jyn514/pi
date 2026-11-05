@@ -122,6 +122,7 @@ describe("regression #6363: agent settled event and idle waiting", () => {
 				fork: async () => ({ cancelled: false }),
 				navigateTree: async () => ({ cancelled: false }),
 				switchSession: async () => ({ cancelled: false }),
+				requestReload: async () => {},
 				reload: async () => {},
 			},
 		});

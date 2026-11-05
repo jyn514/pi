@@ -28,6 +28,7 @@ import {
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { toJsonEvent } from "../json-event.ts";
+import { createReloadRequester } from "../queued-reload.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import type {
 	RpcCommand,
@@ -320,10 +321,12 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 
 	const rebindSession = async (): Promise<void> => {
 		session = runtimeHost.session;
+		const requestReload = createReloadRequester(session, (performReload) => performReload());
 		await session.bindExtensions({
 			uiContext: createExtensionUIContext(),
 			mode: "rpc",
 			commandContextActions: {
+				requestReload,
 				waitForIdle: () => session.waitForIdle(),
 				newSession: async (options) => runtimeHost.newSession(options),
 				fork: async (entryId, forkOptions) => {

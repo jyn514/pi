@@ -9,6 +9,7 @@ import {
 import { getApiProvider, registerApiProvider } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ExtensionCommandContext, ReloadCompletionHandler } from "../../src/core/extensions/types.ts";
 import { InteractiveMode } from "../../src/modes/interactive/interactive-mode.ts";
 import { createTestExtensionsResult, createTestResourceLoader } from "../utilities.ts";
 import { createHarness, createTestUiContext, type Harness } from "./harness.ts";
@@ -33,6 +34,11 @@ function createEditor(
 		defaultEditor: {} as { onSubmit?: (text: string) => Promise<void> },
 		showStatus: vi.fn(),
 		showWarning: vi.fn(),
+		showError: vi.fn(),
+		requestReload: Reflect.get(
+			InteractiveMode.prototype,
+			"requestReload",
+		) as ExtensionCommandContext["requestReload"],
 		reloadResources: reload,
 		handleReloadCommand: Reflect.get(InteractiveMode.prototype, "handleReloadCommand") as () => Promise<void>,
 	};
@@ -54,11 +60,24 @@ describe("queued interactive reload", () => {
 		const releaseReload = deferred();
 		const trace: string[] = [];
 		let version = "old";
+		const completions: Array<Error | undefined> = [];
+		const callbackErrors: string[] = [];
 		const extensions = () =>
 			createTestExtensionsResult(
 				[
 					(pi) => {
 						const loadedVersion = version;
+						pi.registerCommand("queue-reload", {
+							description: "Queue a reload",
+							handler: async (_args, ctx) => {
+								await ctx.requestReload((error) => {
+									completions.push(error);
+									trace.push(`${loadedVersion}:complete`);
+									expect(() => ctx.isIdle()).toThrow("stale");
+									if (completions.length === 1) throw new Error("callback fixture failed");
+								});
+							},
+						});
 						pi.on("turn_end", () => {
 							trace.push(`${loadedVersion}:turn_end`);
 						});
@@ -122,7 +141,23 @@ describe("queued interactive reload", () => {
 			registerApiProvider(provider);
 		};
 		harnesses.push(harness);
-		await harness.session.bindExtensions({ uiContext: createTestUiContext() });
+		const { host, submit } = createEditor(harness.session, async (performReload) => {
+			await performReload();
+			trace.push("UI refreshed");
+		});
+		await harness.session.bindExtensions({
+			uiContext: createTestUiContext(),
+			onError: (error) => callbackErrors.push(error.error),
+			commandContextActions: {
+				waitForIdle: () => harness.session.waitForIdle(),
+				newSession: async () => ({ cancelled: true }),
+				fork: async () => ({ cancelled: true }),
+				navigateTree: async () => ({ cancelled: true }),
+				switchSession: async () => ({ cancelled: true }),
+				reload: () => harness.session.reload(),
+				requestReload: (onComplete) => host.requestReload(onComplete),
+			},
+		});
 		let nextContext: TranscriptContext | undefined;
 		harness.setResponses([
 			fauxAssistantMessage([fauxToolCall("wait", {}), fauxToolCall("versioned", {})], { stopReason: "toolUse" }),
@@ -134,9 +169,11 @@ describe("queued interactive reload", () => {
 		]);
 		const running = harness.session.prompt("start");
 		await started.promise;
-		const { host, submit } = createEditor(harness.session);
 		await submit();
+		await harness.session.prompt("/queue-reload");
+		await harness.session.prompt("/queue-reload");
 		await submit();
+		expect(completions).toEqual([]);
 		expect(host.showWarning).not.toHaveBeenCalled();
 		expect(trace).not.toContain("reload");
 		release.resolve();
@@ -172,6 +209,10 @@ describe("queued interactive reload", () => {
 		expect(trace.indexOf("old:turn_end")).toBeLessThan(trace.indexOf("old:shutdown"));
 		expect(trace.indexOf("new:start")).toBeLessThan(trace.indexOf("new:turn_start"));
 		expect(trace.indexOf("new:turn_start")).toBeLessThan(trace.indexOf("provider"));
+		expect(completions).toEqual([undefined, undefined]);
+		expect(callbackErrors).toEqual(["callback fixture failed"]);
+		expect(trace.indexOf("UI refreshed")).toBeLessThan(trace.indexOf("old:complete"));
+		expect(trace.indexOf("old:complete")).toBeLessThan(trace.indexOf("new:turn_start"));
 	});
 
 	it.each([false, true])(
@@ -310,13 +351,19 @@ describe("queued interactive reload", () => {
 			throw new Error("reload fixture failed");
 		});
 		const { host, submit } = createEditor(harness.session, reload);
-		Object.assign(host, { showError: vi.fn() });
+		const completed = vi.fn<ReloadCompletionHandler>();
+		const coalesced = vi.fn<ReloadCompletionHandler>();
 		await submit();
+		await host.requestReload(completed);
+		await host.requestReload(coalesced);
+		expect(completed).not.toHaveBeenCalled();
 		const idle = harness.session.waitForIdle();
 		release.resolve();
 		await running;
 		await idle;
-		expect(Reflect.get(host, "showError")).toHaveBeenCalledWith("Reload failed: reload fixture failed");
+		expect(host.showError).toHaveBeenCalledWith("Reload failed: reload fixture failed");
+		expect(completed).toHaveBeenCalledExactlyOnceWith(new Error("reload fixture failed"));
+		expect(coalesced).toHaveBeenCalledExactlyOnceWith(new Error("reload fixture failed"));
 		reload.mockImplementation(async () => {});
 		await submit();
 		expect(reload).toHaveBeenCalledTimes(2);

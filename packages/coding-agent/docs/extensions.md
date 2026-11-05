@@ -1587,7 +1587,9 @@ pi.registerCommand("handoff", {
 
 ### ctx.reload()
 
-Run the same reload flow as `/reload`.
+Reload immediately and wait for completion.
+Unlike `/reload`, this does not queue while busy.
+Interactive mode warns and returns while streaming or compacting; headless modes reject.
 
 ```typescript
 pi.registerCommand("reload-runtime", {
@@ -1609,7 +1611,8 @@ Important behavior:
 
 For predictable behavior, treat reload as terminal for that handler (`await ctx.reload(); return;`).
 
-Tools run with `ExtensionToolContext`, not `ExtensionCommandContext`, so they cannot call `ctx.reload()`, and Pi cannot reload while the agent is running. To let the LLM trigger a reload, have the tool record the request and run the command from `agent_settled`, where messages sent by handlers are processed after all settled handlers finish:
+Tools run with `ExtensionToolContext`, not `ExtensionCommandContext`, so they cannot call `ctx.reload()` or `ctx.requestReload()`.
+Pi waits for a safe response boundary before replacing a running extension runtime. To let the LLM trigger a reload, have the tool record the request and run the command from `agent_settled`, where messages sent by handlers are processed after all settled handlers finish:
 
 ```typescript
 let reloadRequested = false;
@@ -1637,6 +1640,37 @@ pi.on("agent_settled", () => {
 ```
 
 `expandPromptTemplates: true` dispatches the text as a command. Without it, or when queued with `deliverAs`, the text reaches the model as a plain user message. See [reload-runtime.ts](../examples/extensions/reload-runtime.ts).
+
+### ctx.requestReload(onComplete)
+
+Queue the same reload as `/reload`, including interactive UI refresh.
+When idle, reload immediately.
+When busy, return after admitting the request and run it at the next safe response boundary or after compaction or tree navigation finishes.
+Repeated requests share one reload; each callback receives its outcome.
+
+```typescript
+pi.registerCommand("queue-reload", {
+  description: "Reload at the next safe response boundary",
+  handler: async (_args, ctx) => {
+    await ctx.requestReload((error) => {
+      // This callback still belongs to the old extension runtime.
+      // Reply to an external caller here; do not use the old pi or ctx.
+      process.stderr.write(error ? `Reload failed: ${error.message}\n` : "Reload complete\n");
+    });
+  },
+});
+```
+
+The callback runs after the mode finishes refreshing, including the new runtime's `session_start` handlers.
+It receives `undefined` on success or an `Error` on failure.
+A throwing callback is reported as an extension error and does not prevent other callbacks from running.
+Keep transport replies and other completion handling in the callback, not after `await ctx.requestReload()`.
+Do not await a completion signal from an active tool or lifecycle handler: it would prevent the safe boundary from arriving.
+
+Pending requests belong to their session and are discarded when it is replaced or disposed.
+Use `session_shutdown` to release waiting resources on shutdown or session replacement.
+For `reason: "reload"`, retain resources needed by the completion callback until it runs.
+Like `ctx.reload()`, this method is unavailable from awaited lifecycle handlers.
 
 ## ExtensionAPI Methods
 

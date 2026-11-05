@@ -1,7 +1,8 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { Container, Text } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
-import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
+import type { AgentSession, AgentSessionEvent } from "../../../src/core/agent-session.ts";
+import type { ReloadCompletionHandler } from "../../../src/core/extensions/types.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
 import { createHarness, createTestUiContext } from "../harness.ts";
@@ -54,13 +55,13 @@ type ReloadCommandContext = {
 	hideThinkingBlock: boolean;
 	session: {
 		isIdle: boolean;
-		requestReload: (reload: () => Promise<void>) => Promise<void>;
+		requestReload: (reload: (performReload: AgentSession["reload"]) => Promise<void>) => Promise<void>;
 		isStreaming: boolean;
 		isCompacting: boolean;
 		reload: (options?: { beforeSessionStart?: () => void | Promise<void> }) => Promise<void>;
 		resourceLoader: { getThemes: () => { themes: [] } };
 		extensionRunner: unknown;
-		modelRegistry: { getError: () => string | undefined };
+		modelRuntime: { getError: () => string | undefined };
 	};
 	settingsManager: {
 		getHttpIdleTimeoutMs: () => number;
@@ -85,7 +86,9 @@ type ReloadCommandContext = {
 	editor: unknown;
 	defaultEditor: { setPaddingX: (padding: number) => void; setAutocompleteMaxVisible: (maxVisible: number) => void };
 	themeController: { applyFromSettings: () => Promise<void> };
-	reloadResources: () => Promise<void>;
+	reloadResources: (performReload: AgentSession["reload"]) => Promise<void>;
+	applyRuntimeSettings: () => void;
+	requestReload: (onComplete: ReloadCompletionHandler) => Promise<void>;
 	resetExtensionUI: () => void;
 	rebuildChatFromMessages: () => void;
 	setupAutocompleteProvider: () => void;
@@ -104,7 +107,8 @@ type InteractiveModePrototype = {
 	): void;
 	rebindCurrentSession(this: RebindContext, options?: { renderBeforeBind?: boolean }): Promise<void>;
 	handleReloadCommand(this: ReloadCommandContext): Promise<void>;
-	reloadResources(this: ReloadCommandContext): Promise<void>;
+	requestReload(this: ReloadCommandContext, onComplete: ReloadCompletionHandler): Promise<void>;
+	reloadResources(this: ReloadCommandContext, performReload: AgentSession["reload"]): Promise<void>;
 };
 
 const interactiveModePrototype = InteractiveMode.prototype as unknown as InteractiveModePrototype;
@@ -126,12 +130,18 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 	const editor = overrides.editor ?? {};
 	return {
 		hideThinkingBlock: overrides.hideThinkingBlock ?? false,
-		async reloadResources() {
-			await interactiveModePrototype.reloadResources.call(this);
+		requestReload(onComplete) {
+			return interactiveModePrototype.requestReload.call(this, onComplete);
 		},
+		async reloadResources(performReload) {
+			await interactiveModePrototype.reloadResources.call(this, performReload);
+		},
+		applyRuntimeSettings: () => {},
 		session: {
 			isIdle: true,
-			requestReload: async (reload) => reload(),
+			async requestReload(reload) {
+				await reload((options) => this.reload(options));
+			},
 			isStreaming: false,
 			isCompacting: false,
 			reload: async (options) => {
@@ -139,7 +149,7 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 			},
 			resourceLoader: { getThemes: () => ({ themes: [] }) },
 			extensionRunner: {},
-			modelRegistry: { getError: () => undefined },
+			modelRuntime: { getError: () => undefined },
 			...overrides.session,
 		},
 		settingsManager: {
@@ -484,8 +494,13 @@ describe("regression #5943: session_start transient UI", () => {
 			},
 		});
 
-		const reloadPromise = interactiveModePrototype.handleReloadCommand.call(context);
+		const completed = vi.fn((error?: Error) => {
+			expect(error).toBeUndefined();
+			expect(focused).toBe(editor);
+		});
+		const reloadPromise = context.requestReload(completed);
 		await reloadWaiting;
+		expect(completed).not.toHaveBeenCalled();
 
 		expect(chatRestored).toBe(true);
 		expect(focused).not.toBe(editor);
@@ -494,5 +509,6 @@ describe("regression #5943: session_start transient UI", () => {
 		await reloadPromise;
 
 		expect(focused).toBe(editor);
+		expect(completed).toHaveBeenCalledOnce();
 	});
 });

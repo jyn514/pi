@@ -436,6 +436,9 @@ export interface ExtensionToolContext extends ExtensionContext {
 	finishTurn(message: string): void;
 }
 
+/** Receives the reload outcome after the old extension runtime has been replaced. */
+export type ReloadCompletionHandler = (error?: Error) => void | Promise<void>;
+
 /**
  * Extended context for command handlers.
  * Includes session control methods only safe in user-initiated commands.
@@ -487,6 +490,16 @@ export interface ExtensionCommandContext extends ExtensionContext {
 
 	/** Reload extensions, skills, prompts, themes, and context files. */
 	reload(): Promise<void>;
+
+	/**
+	 * Queue a reload at the next safe response boundary, or reload immediately when idle.
+	 * Returns after admission when busy. Coalesced requests each receive their completion callback.
+	 * onComplete runs after the mode finishes reloading; undefined means success.
+	 * The callback belongs to the old runtime and must not reuse its pi or ctx.
+	 * Requests are discarded on session replacement; release waiting resources in session_shutdown.
+	 * Do not call from an awaited lifecycle handler.
+	 */
+	requestReload(onComplete: ReloadCompletionHandler): Promise<void>;
 }
 
 /**
@@ -2383,6 +2396,7 @@ export interface ExtensionCommandContextActions {
 		options?: { withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
 	) => Promise<{ cancelled: boolean }>;
 	reload: () => Promise<void>;
+	requestReload: ExtensionCommandContext["requestReload"];
 }
 
 /**

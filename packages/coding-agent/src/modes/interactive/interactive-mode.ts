@@ -90,6 +90,7 @@ import type {
 	ExtensionWidgetOptions,
 	MarkdownTransformer,
 	ProjectTrustContext,
+	ReloadCompletionHandler,
 	UserBashEventResult,
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
@@ -135,6 +136,7 @@ import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
 import { stripBom } from "../../utils/text.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
 import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
+import { createReloadRequester } from "../queued-reload.ts";
 import { reportBug } from "./bug-report.ts";
 import { createChatViewport } from "./chat-viewport.ts";
 import { ArminComponent } from "./components/armin.ts";
@@ -464,6 +466,7 @@ interface ExtensionChangelogUpdate {
 
 export class InteractiveMode {
 	private runtimeHost: AgentSessionRuntime;
+	private queuedReload?: { session: AgentSession; request: ExtensionCommandContext["requestReload"] };
 	private renderer: TuiMainScreen | TuiAltScreen;
 	private ui: TUI;
 	private mainScreenRenderState: TuiMainScreenRenderState | undefined;
@@ -2146,6 +2149,7 @@ export class InteractiveMode {
 				reload: async () => {
 					await this.handleReloadCommand(false);
 				},
+				requestReload: (onComplete) => this.requestReload(onComplete),
 			},
 			shutdownHandler: () => {
 				this.shutdownRequested = true;
@@ -6835,18 +6839,26 @@ export class InteractiveMode {
 	// Command handlers
 	// =========================================================================
 
+	private requestReload(onComplete: ReloadCompletionHandler): Promise<void> {
+		const session = this.session;
+		if (this.queuedReload?.session !== session) {
+			this.queuedReload = {
+				session,
+				request: createReloadRequester(session, async (performReload) => {
+					// A pending request belongs to the session that accepted it.
+					if (this.session !== session) throw new Error("Session changed before reload");
+					await this.reloadResources(performReload);
+				}),
+			};
+		}
+		return this.queuedReload.request(onComplete);
+	}
+
 	private async handleReloadCommand(queue = true): Promise<void> {
 		if (queue) {
-			const session = this.session;
-			if (!session.isIdle) this.showStatus("Reload queued for the next response boundary.");
-			await session.requestReload(async (performReload) => {
-				// A pending request belongs to the session that accepted it.
-				if (this.session !== session) return;
-				try {
-					await this.reloadResources(performReload);
-				} catch (error) {
-					this.showError(`Reload failed: ${error instanceof Error ? error.message : String(error)}`);
-				}
+			if (!this.session.isIdle) this.showStatus("Reload queued for the next response boundary.");
+			await this.requestReload((error) => {
+				if (error) this.showError(`Reload failed: ${error.message}`);
 			});
 			return;
 		}
@@ -6860,7 +6872,11 @@ export class InteractiveMode {
 			return;
 		}
 
-		await this.reloadResources((options) => this.session.reload(options));
+		try {
+			await this.reloadResources((options) => this.session.reload(options));
+		} catch (error) {
+			this.showError(`Reload failed: ${error instanceof Error ? error.message : String(error)}`);
+		}
 	}
 
 	private async reloadResources(performReload: AgentSession["reload"]): Promise<void> {
@@ -6941,7 +6957,7 @@ export class InteractiveMode {
 			if (!reloadBoxDismissed) {
 				dismissReloadBox(previousEditor as Component);
 			}
-			this.showError(`Reload failed: ${error instanceof Error ? error.message : String(error)}`);
+			throw error;
 		}
 	}
 

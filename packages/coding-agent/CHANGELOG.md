@@ -21,6 +21,7 @@
 - `pi.registerMarkdownTransformer()` takes an optional `{ messageTypes }` that selects the Markdown surfaces a transformer runs on. Besides user, assistant, and thinking Markdown, transformers can now opt into `custom` (custom messages and skill blocks), `summary` (branch and compaction summaries), and `changelog` (What's New, `/changelog`, the Extension Updates notice, and the Update Available note). Without options a transformer runs on user, assistant, and thinking Markdown as before. The built-in Mermaid renderer now also draws diagrams in expanded branch and compaction summaries
 
 - Added `ctx.resolveSkillCommand()` so input handlers can resolve loaded `/skill:name` commands without duplicating Pi's parsing or resource discovery.
+- Added `ctx.requestReload(onComplete)` so extension commands can queue reloads at safe boundaries and receive completion after the mode finishes refreshing.
 
 ### Changed
 
