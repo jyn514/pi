@@ -13,12 +13,17 @@ import {
 import { API } from "typescript/unstable/sync";
 
 const ignoredDirectories = new Set([".artifacts", ".git", "coverage", "dist", "node_modules"]);
+// Root artifact trees can contain entire copied checkouts, unrelated to the current source.
+const ignoredRootDirectories = new Set(["target", "work"]);
 const files = [];
 
 function collectTypescriptFiles(directory) {
 	for (const entry of readdirSync(directory, { withFileTypes: true })) {
 		if (entry.isDirectory()) {
-			if (!ignoredDirectories.has(entry.name)) {
+			if (
+				!ignoredDirectories.has(entry.name) &&
+				(directory !== "." || !ignoredRootDirectories.has(entry.name))
+			) {
 				collectTypescriptFiles(join(directory, entry.name));
 			}
 			continue;
@@ -62,6 +67,7 @@ const api = new API({
 	},
 });
 
+let checkSucceeded = false;
 try {
 	const program = api.updateSnapshot({ openProjects: [configPath] }).getProject(configPath).program;
 	for (const file of files.sort()) {
@@ -94,8 +100,14 @@ try {
 
 		visit(sourceFile);
 	}
+	checkSucceeded = true;
 } finally {
-	api.close();
+	try {
+		api.close();
+	} catch (error) {
+		// A dead native child can fail again during close; retain the original parsing failure.
+		if (checkSucceeded) throw error;
+	}
 }
 
 if (failures.length > 0) {
