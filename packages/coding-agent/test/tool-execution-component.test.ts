@@ -244,6 +244,32 @@ describe("ToolExecutionComponent parity", () => {
 		},
 	);
 
+	test.each([0, 1] as const)("uses vertical padding %i for skill loads and updates", (outputPadY) => {
+		const component = new ToolExecutionComponent(
+			"read",
+			"tool-skill-padding",
+			{ path: join(process.cwd(), "example-skill", "SKILL.md") },
+			{ outputPadY },
+			createReadToolDefinition(process.cwd()),
+			createFakeTui(),
+			process.cwd(),
+		);
+		component.updateResult({ content: [{ type: "text", text: "skill details" }], isError: false });
+
+		for (const padding of [outputPadY, outputPadY === 0 ? 1 : 0] as const) {
+			component.setOutputPadY(padding);
+			component.setExpanded(false);
+			const collapsed = component.render(120).map((line) => stripAnsi(line).trim());
+			expect(collapsed.join("\n")).toContain("[skill] example-skill");
+			expect(collapsed).toHaveLength(padding === 0 ? 1 : 4);
+
+			component.setExpanded(true);
+			const expanded = component.render(120).map((line) => stripAnsi(line).trim());
+			expect(expanded).toHaveLength(padding === 0 ? 2 : 6);
+			expect(expanded[padding === 0 ? 1 : 4]).toBe("skill details");
+		}
+	});
+
 	test("self-rendered empty tool rows take no layout space", () => {
 		const toolDefinition: ToolDefinition = {
 			...createBaseToolDefinition(),

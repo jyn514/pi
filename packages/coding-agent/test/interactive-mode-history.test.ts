@@ -155,6 +155,33 @@ function tool(id: string, needle: string): AssistantMessage {
 beforeEach(() => initTheme("dark"));
 
 describe("lazy historical transcript", () => {
+	it("applies vertical padding to restored skill invocations and their user messages", () => {
+		const { host, sessionManager } = createHistory();
+		sessionManager.appendMessage(
+			userMsg(
+				'<skill name="example-skill" location="/tmp/example-skill/SKILL.md">\nskill details\n</skill>\n\nuser request',
+			),
+		);
+		host.renderInitialMessages();
+
+		const renderLines = () => host.chatContainer.render(100).map((line) => stripAnsi(line).trim());
+		expect(renderLines()).toHaveLength(2);
+		expect(renderLines()[0]).toContain("[skill] example-skill");
+		expect(renderLines()[1]).toBe("user request");
+
+		host.applyOutputPadY(1);
+		expect(renderLines().filter((line) => line === "")).toHaveLength(5);
+		host.applyOutputPadY(0);
+		expect(renderLines()).toHaveLength(2);
+
+		host.setToolsExpanded(true);
+		expect(renderLines().every((line) => line !== "")).toBe(true);
+		const expanded = renderLines();
+		const detailsRow = expanded.indexOf("skill details");
+		expect(detailsRow).toBeGreaterThanOrEqual(0);
+		expect(expanded[detailsRow + 1]).toBe("user request");
+	});
+
 	it("groups clocks across resumed historical headings, summaries, and current messages", () => {
 		const { host, sessionManager } = createHistory();
 		const minute = new Date(2020, 0, 2, 9, 7).getTime();

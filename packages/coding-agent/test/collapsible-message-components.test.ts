@@ -82,6 +82,35 @@ describe("collapsible message components", () => {
 		expect(renderText(component)).not.toContain("skill details");
 	});
 
+	test.each([0, 1] as const)("uses vertical padding %i for skill invocations and updates", (outputPadY) => {
+		const component = new SkillInvocationMessageComponent(
+			{
+				name: "example-skill",
+				location: "/tmp/example-skill.md",
+				content: "skill details",
+				userMessage: undefined,
+			},
+			undefined,
+			1,
+			[],
+			undefined,
+			undefined,
+			undefined,
+			outputPadY,
+		);
+
+		expect(component.render(WIDTH)).toHaveLength(outputPadY === 0 ? 1 : 3);
+		for (const padding of [outputPadY, outputPadY === 0 ? 1 : 0] as const) {
+			component.setOutputPadY(padding);
+			component.setExpanded(false);
+			expect(component.render(WIDTH)).toHaveLength(padding === 0 ? 1 : 3);
+			clickRow(component, "[skill]");
+			const lines = component.render(WIDTH).map((line) => stripAnsi(line).trim());
+			if (padding === 0) expect(lines).toEqual(["[skill]", "example-skill", "skill details"]);
+			else expect(lines).toEqual(["", "[skill]", "example-skill", "", "skill details", ""]);
+		}
+	});
+
 	describe("Markdown transformers", () => {
 		const seen: Array<{ markdown: string; context: MarkdownTransformContext }> = [];
 		const transformers: MarkdownTransformer[] = [

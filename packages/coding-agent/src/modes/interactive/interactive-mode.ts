@@ -4094,6 +4094,7 @@ export class InteractiveMode {
 							options?.messageId,
 							options?.timestamp,
 							message.timestamp,
+							this.outputPadY,
 						);
 						component.setExpanded(this.toolOutputExpanded);
 						destination.addChild(component);

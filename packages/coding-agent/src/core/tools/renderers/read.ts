@@ -113,7 +113,7 @@ function formatReadResult(
 	options: ToolRenderResultOptions,
 	theme: Theme,
 	showImages: boolean,
-	_cwd: string,
+	outputPadY: 0 | 1,
 	isError: boolean,
 ): string {
 	// Successful reads are hidden by default; an explicit budget opts into a collapsed preview.
@@ -133,7 +133,7 @@ function formatReadResult(
 		? highlightCode(replaceTabs(output), lang, Math.min(maxLines, lines.length))
 		: lines.slice(0, maxLines);
 	const remaining = lines.length - maxLines;
-	let text = `\n${displayLines.map((line) => (lang ? replaceTabs(line) : theme.fg("toolOutput", replaceTabs(line)))).join("\n")}`;
+	let text = `${outputPadY > 0 ? "\n" : ""}${displayLines.map((line) => (lang ? replaceTabs(line) : theme.fg("toolOutput", replaceTabs(line)))).join("\n")}`;
 	if (remaining > 0) {
 		text += `${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
 	}
@@ -170,7 +170,7 @@ export const readRenderers: Pick<ToolDefinition<any, ReadToolDetails | undefined
 				options,
 				theme,
 				context.showImages,
-				context.cwd,
+				context.outputPadY,
 				context.isError,
 			),
 		);

@@ -19,6 +19,7 @@ export class SkillInvocationMessageComponent extends Box {
 	private messageId?: string;
 	private timestamp?: string;
 	private clockTimestamp: string | number | undefined;
+	private outputPadY: 0 | 1;
 
 	constructor(
 		skillBlock: ParsedSkillBlock,
@@ -28,14 +29,16 @@ export class SkillInvocationMessageComponent extends Box {
 		messageId?: string,
 		timestamp?: string,
 		clockTimestamp: string | number | undefined = timestamp,
+		outputPadY: 0 | 1 = 1,
 	) {
-		super(outputPad, 1, (t) => theme.bg("customMessageBg", t));
+		super(outputPad, outputPadY, (t) => theme.bg("customMessageBg", t));
 		this.skillBlock = skillBlock;
 		this.markdownTheme = markdownTheme;
 		this.markdownTransformers = markdownTransformers;
 		this.messageId = messageId;
 		this.timestamp = timestamp;
 		this.clockTimestamp = clockTimestamp;
+		this.outputPadY = outputPadY;
 		this.updateDisplay();
 	}
 
@@ -46,6 +49,12 @@ export class SkillInvocationMessageComponent extends Box {
 
 	setOutputPad(outputPad: number): void {
 		this.setPaddingX(outputPad);
+	}
+
+	setOutputPadY(outputPadY: 0 | 1): void {
+		this.outputPadY = outputPadY;
+		this.setPaddingY(outputPadY);
+		this.updateDisplay();
 	}
 
 	override invalidate(): void {
@@ -61,7 +70,7 @@ export class SkillInvocationMessageComponent extends Box {
 			// Expanded: label + skill name header + full content
 			const label = theme.fg("customMessageLabel", `\x1b[1m[skill]\x1b[22m`);
 			content.addChild(new Text(label, 0, 0));
-			const header = `**${this.skillBlock.name}**\n\n`;
+			const header = `**${this.skillBlock.name}**${this.outputPadY > 0 ? "\n\n" : "  \n"}`;
 			const transform = createMarkdownTransform(
 				"custom",
 				() => false,
