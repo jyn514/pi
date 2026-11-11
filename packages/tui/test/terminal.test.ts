@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { describe, it, mock } from "node:test";
+import { describe, it, mock, type TestContext } from "node:test";
 import { setKittyProtocolActive } from "../src/keys.ts";
 import {
 	normalizeAppleTerminalInput,
@@ -419,6 +419,64 @@ describe("ProcessTerminal title", () => {
 		} finally {
 			process.stdout.write = previousWrite;
 		}
+	});
+});
+
+describe("ProcessTerminal resize notifications", () => {
+	function setupTerminal(t: TestContext): ProcessTerminal {
+		const terminal = new ProcessTerminal();
+		t.mock.method(process.stdout, "write", () => true);
+		t.mock.method(process.stdin, "resume", () => process.stdin);
+		t.mock.method(process.stdin, "pause", () => process.stdin);
+		t.mock.method(process.stdin, "setEncoding", () => process.stdin);
+		t.mock.method(process, "kill", () => true);
+		t.after(() => terminal.stop());
+		return terminal;
+	}
+
+	it("reports raw resize signals even when dimensions stay unchanged, without a second stdout notification", (t) => {
+		const terminal = setupTerminal(t);
+		const dimensions = [terminal.columns, terminal.rows];
+		let notifications = 0;
+		terminal.start(
+			() => {},
+			() => notifications++,
+		);
+
+		process.emit("SIGWINCH");
+
+		assert.deepEqual([terminal.columns, terminal.rows], dimensions);
+		assert.equal(notifications, 1);
+		process.stdout.emit("resize");
+		assert.equal(notifications, 1);
+	});
+
+	it("removes the signal handler on stop and installs only the restarted callback", (t) => {
+		const terminal = setupTerminal(t);
+		let firstNotifications = 0;
+		let secondNotifications = 0;
+		terminal.start(
+			() => {},
+			() => firstNotifications++,
+		);
+		process.emit("SIGWINCH");
+		assert.equal(firstNotifications, 1);
+
+		terminal.stop();
+		process.emit("SIGWINCH");
+		assert.equal(firstNotifications, 1);
+
+		terminal.start(
+			() => {},
+			() => secondNotifications++,
+		);
+		process.emit("SIGWINCH");
+		assert.equal(firstNotifications, 1);
+		assert.equal(secondNotifications, 1);
+
+		terminal.stop();
+		process.emit("SIGWINCH");
+		assert.equal(secondNotifications, 1);
 	});
 });
 

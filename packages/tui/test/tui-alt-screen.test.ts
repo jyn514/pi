@@ -67,6 +67,48 @@ class RecordingTerminal extends VirtualTerminal {
 }
 
 describe("TuiAltScreen", () => {
+	for (const { name, sizes } of [
+		{ name: "unchanged dimensions", sizes: [[20, 4]] },
+		{
+			name: "a shrink and restore before rendering",
+			sizes: [
+				[20, 3],
+				[20, 4],
+			],
+		},
+	] as const) {
+		it(`repaints stale rows after a resize notification with ${name}`, async () => {
+			const terminal = new VirtualTerminal(20, 4);
+			const tui = new TuiAltScreen(terminal);
+			const expected = ["transcript", "editor", "cwd", "51.1%/272k"];
+			tui.addChild(new Text(expected.join("\n"), 0, 0));
+			tui.start();
+			try {
+				await terminal.waitForRender();
+				assert.deepEqual(
+					terminal.getViewport().map((line) => line.trimEnd()),
+					expected,
+				);
+
+				// A physical screen change need not change Pi's cached frame.
+				terminal.write("\x1b[3;1H\x1b[2Kold builtin stats");
+				await terminal.flush();
+				assert.equal(terminal.getViewport()[2], "old builtin stats");
+				assert.equal(stripTerminalSequences(tui.getScreenLines()[2]!).trimEnd(), "cwd");
+
+				for (const [columns, rows] of sizes) terminal.resize(columns, rows);
+				await terminal.waitForRender();
+
+				assert.deepEqual(
+					terminal.getViewport().map((line) => line.trimEnd()),
+					expected,
+				);
+			} finally {
+				tui.stop();
+			}
+		});
+	}
+
 	it("does not leak cursor markers while selecting after the caret", async () => {
 		const terminal = new RecordingTerminal(20, 4);
 		const tui = new TuiAltScreen(terminal, undefined, undefined, { copyOnSelect: false });

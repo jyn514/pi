@@ -84,7 +84,7 @@ export function normalizeAppleTerminalInput(data: string, isAppleTerminal: boole
  * Minimal terminal interface for TUI
  */
 export interface Terminal {
-	// Start the terminal with input and resize handlers
+	// Start input handling and report resize notifications, even when final dimensions are unchanged.
 	start(onInput: (data: string) => void, onResize: () => void): void;
 
 	// Stop the terminal and restore state
@@ -219,8 +219,8 @@ export class ProcessTerminal implements Terminal {
 		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
 		process.stdout.write("\x1b[?2004h");
 
-		// Set up resize handler immediately
-		process.stdout.on("resize", this.resizeHandler);
+		// stdout suppresses resize events when a shrink/restore leaves the cached dimensions unchanged.
+		process.on("SIGWINCH", this.resizeHandler);
 
 		// Refresh terminal dimensions - they may be stale after suspend/resume
 		// (SIGWINCH is lost while process is stopped). Unix only, best-effort.
@@ -517,7 +517,7 @@ export class ProcessTerminal implements Terminal {
 		}
 		this.inputHandler = undefined;
 		if (this.resizeHandler) {
-			process.stdout.removeListener("resize", this.resizeHandler);
+			process.removeListener("SIGWINCH", this.resizeHandler);
 			this.resizeHandler = undefined;
 		}
 

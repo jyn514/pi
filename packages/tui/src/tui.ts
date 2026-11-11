@@ -976,7 +976,8 @@ export abstract class TuiBase extends Container implements TUI {
 		this.beforeTerminalStart();
 		this.terminal.start(
 			(data) => this.handleTerminalInput(data),
-			() => this.requestRender(),
+			// A shrink/restore can leave fullscreen rows stale even when the final dimensions match.
+			() => this.requestRender(this.mode === "fullscreen"),
 		);
 		this.afterTerminalStart();
 		this.terminal.hideCursor();
