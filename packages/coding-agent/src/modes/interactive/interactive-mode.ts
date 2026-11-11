@@ -5,7 +5,6 @@
 
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
@@ -3243,7 +3242,7 @@ export class InteractiveMode {
 		};
 
 		// Handle clipboard paste (triggered on Ctrl+V). Copied files use their original paths,
-		// images are attached via temporary files, and plain text is the final fallback.
+		// images are saved in the session's target directory, and plain text is the final fallback.
 		this.defaultEditor.onPasteImage = () => {
 			void this.handleClipboardPaste();
 		};
@@ -3284,10 +3283,11 @@ export class InteractiveMode {
 
 			const image = await readClipboardImage();
 			if (image) {
-				const tmpDir = os.tmpdir();
+				const targetDir = path.join(this.sessionManager.getCwd(), "target");
+				fs.mkdirSync(targetDir, { recursive: true });
 				const ext = extensionForImageMimeType(image.mimeType) ?? "png";
 				const fileName = `pi-clipboard-${crypto.randomUUID()}.${ext}`;
-				const filePath = path.join(tmpDir, fileName);
+				const filePath = path.join(targetDir, fileName);
 				fs.writeFileSync(filePath, Buffer.from(image.bytes));
 
 				this.editor.insertTextAtCursor?.(filePath);
