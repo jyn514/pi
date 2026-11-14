@@ -56,4 +56,34 @@ describe("user bash output truncation (#10164)", () => {
 		expect(result.truncated).toBe(false);
 		expect(result.fullOutputPath).toBeUndefined();
 	});
+
+	it.each([4093, 16384])("caps live output while draining and saving all bytes (chunk size %s)", async (chunkSize) => {
+		const input = Buffer.from(`${"x".repeat(1024 * 1024 - 1)}🙂${"y".repeat(128 * 1024)}`);
+		const chunks: string[] = [];
+		let drained = 0;
+		const result = await executeBashWithOperations(
+			"noisy command",
+			process.cwd(),
+			{
+				exec: async (_command, _cwd, { onData }) => {
+					for (let offset = 0; offset < input.length; offset += chunkSize) {
+						onData(input.subarray(offset, offset + chunkSize));
+						drained++;
+					}
+					return { exitCode: 0 };
+				},
+			},
+			{ onChunk: (text) => chunks.push(text) },
+		);
+		if (result.fullOutputPath) tempFiles.push(result.fullOutputPath);
+		const streamed = chunks.join("");
+		expect(streamed).toBe(
+			`${"x".repeat(1024 * 1024 - 1)}\n[Live output truncated at 1 MiB; full output is saved to a log.]\n`,
+		);
+		expect(drained).toBe(Math.ceil(input.length / chunkSize));
+		expect(result.exitCode).toBe(0);
+		await vi.waitFor(async () => {
+			expect(await readFile(result.fullOutputPath!)).toEqual(input);
+		});
+	});
 });

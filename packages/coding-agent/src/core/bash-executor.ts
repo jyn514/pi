@@ -59,6 +59,10 @@ export async function executeBashWithOperations(
 	let tempFilePath: string | undefined;
 	let tempFileStream: WriteStream | undefined;
 	let totalBytes = 0;
+	// The interactive component retains every streamed chunk until the command finishes.
+	const maxStreamBytes = 1024 * 1024;
+	let streamBytes = 0;
+	let streamTruncated = false;
 
 	const ensureTempFile = () => {
 		if (tempFilePath) {
@@ -101,7 +105,20 @@ export async function executeBashWithOperations(
 
 		// Stream to callback
 		if (options?.onChunk) {
-			options.onChunk(text);
+			if (!streamTruncated) {
+				const bytes = Buffer.from(text);
+				const remaining = maxStreamBytes - streamBytes;
+				if (bytes.length <= remaining) {
+					streamBytes += bytes.length;
+					options.onChunk(text);
+				} else {
+					let end = remaining;
+					while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
+					if (end > 0) options.onChunk(bytes.subarray(0, end).toString("utf8"));
+					streamTruncated = true;
+					options.onChunk("\n[Live output truncated at 1 MiB; full output is saved to a log.]\n");
+				}
+			}
 		}
 	};
 
