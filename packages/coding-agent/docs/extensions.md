@@ -3461,7 +3461,8 @@ Opening the heading creates the normal body with `expanded: true`; formatting fr
 If the normal renderer already constructs a cheap summary when `expanded` is false, the same function can serve both roles.
 
 In fullscreen mode, left-clicking a custom message renderer's output toggles its `expanded` state unless a child component handles the event first.
-The configurable tool-output expansion action (Ctrl+O by default) also controls custom messages.
+The configurable tool-output expansion action (Ctrl+O by default) also controls custom messages since the latest compaction.
+It leaves older headings and their opened bodies unchanged.
 The default Markdown fallback already shows the full message and does not toggle on click.
 
 Tool `renderCall` and `renderResult` callbacks also receive `context.outputPadY: 0 | 1`. The default tool shell handles padding; a tool using `renderShell: "self"` owns its framing and should honor this value. See [`outputPadY`](settings.md#terminal-and-display) and [`message-renderer.ts`](../examples/extensions/message-renderer.ts).

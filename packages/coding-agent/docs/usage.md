@@ -26,7 +26,7 @@ Resumed sessions use the recorded times.
 Clocks keep the component's background, use contrasting black or white text on grey panels, and do not inherit message text styling.
 Thinking and text within one assistant message share its clock; tool calls use the clock of their containing assistant message.
 Shell commands entered with `!` or `!!` show their start time while running and their recorded result time when finished.
-Press `Ctrl+O` to expand or collapse tool output.
+Press `Ctrl+O` to expand or collapse tool output since the latest compaction.
 To hide collapsed tool-result text previews, set `"toolPreviewLines": 0` in `~/.pi/agent/settings.json` and run `/reload`.
 A positive number sets the result preview length; removing the setting restores tool defaults.
 Write/edit call previews are unaffected.
@@ -50,11 +50,11 @@ The latest compaction summary and later messages use the normal view.
 Without a compaction, the normal view is unchanged.
 This does not change what is sent to the model.
 
-Click an older heading in fullscreen mode to open it, or use the configurable tool-expansion action (`Ctrl+O` by default) to expand all headings.
+Click an older heading in fullscreen mode to open it.
+The configurable tool-expansion action (`Ctrl+O` by default) leaves older headings unchanged.
 Opening creates that entry's normal rendered body with its tool output, reasoning, summaries, and custom-message details expanded.
 This does not change expansion in the current section.
 Closing and reopening reuses the body.
-Expanding all can be expensive for a long session.
 Failed or aborted older entries are marked even while closed.
 
 Display-setting changes rebuild the older section with closed headings and current settings.

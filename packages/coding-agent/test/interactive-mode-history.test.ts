@@ -803,7 +803,7 @@ describe("lazy historical transcript", () => {
 		}
 	});
 
-	it("keeps uncompacted messages in the normal view and global expansion opens old headings", () => {
+	it("keeps uncompacted messages in the normal view and opens old headings individually", () => {
 		const { host, sessionManager, headings, text } = createHistory();
 		const first = sessionManager.appendMessage(userMsg("normal prompt"));
 		Object.assign(host, { outputPadY: 1 });
@@ -817,8 +817,36 @@ describe("lazy historical transcript", () => {
 		host.rebuildTranscript();
 		expect(text()).toContain("▸ You: normal prompt");
 		host.setToolsExpanded(true);
+		expect(text()).toContain("▸ You: normal prompt");
+		expect(text().match(/normal prompt/g)).toHaveLength(1);
+		headings()[0].setExpanded(true);
 		expect(text()).toContain("▾ You: normal prompt");
 		expect(text().match(/normal prompt/g)).toHaveLength(2);
+	});
+
+	it.each([0, 1, 2])("toggles current output without changing history after %i compactions", (compactions) => {
+		const { host, sessionManager, headings, text } = createHistory();
+		for (let index = 0; index < compactions; index++) {
+			const first = sessionManager.appendMessage(
+				tool(`old-${index}`, `${"old line\n".repeat(15)}OLD_TAIL_${index}`),
+			);
+			sessionManager.appendCompaction(`summary ${index}`, first, 1);
+		}
+		sessionManager.appendMessage(tool("current", `${"current line\n".repeat(15)}CURRENT_TAIL`));
+		host.renderInitialMessages();
+		// An individually opened entry must stay open while other historical entries stay closed.
+		headings()[0]?.setExpanded(true);
+		const historicalBefore = headings().map((heading) => heading.render(100));
+		const construct = vi.spyOn(host, "createHistoricalBody");
+		expect(text()).not.toContain("CURRENT_TAIL");
+
+		for (const expanded of [true, false, true]) {
+			host.setToolsExpanded(expanded);
+			if (expanded) expect(text()).toContain("CURRENT_TAIL");
+			else expect(text()).not.toContain("CURRENT_TAIL");
+			expect(headings().map((heading) => heading.render(100))).toEqual(historicalBefore);
+			expect(construct).not.toHaveBeenCalled();
+		}
 	});
 
 	it.each(["manual", "boundary"] as const)(
@@ -1304,6 +1332,10 @@ describe("lazy historical transcript", () => {
 				.flatMap((unit) => unit.fragments),
 		).not.toContain("opaque");
 		host.setToolsExpanded(true);
+		text();
+		expect(bodyRender).not.toHaveBeenCalled();
+		expect(visible).toHaveBeenCalledOnce();
+		headings()[0].setExpanded(true);
 		expect(text()).toContain("custom rendered-only text");
 		expect(visible).toHaveBeenCalledTimes(2);
 		expect(visible).toHaveBeenLastCalledWith(

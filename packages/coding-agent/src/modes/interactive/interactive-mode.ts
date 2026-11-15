@@ -4955,7 +4955,8 @@ export class InteractiveMode {
 		if (isExpandable(activeHeader)) {
 			activeHeader.setExpanded(expanded);
 		}
-		for (const container of [this.loadedResourcesContainer, this.chatContainer, this.historicalContainer]) {
+		// Older entries open individually; toggling all of them would construct the entire compacted history.
+		for (const container of [this.loadedResourcesContainer, this.chatContainer]) {
 			for (const child of container.children) {
 				if (isExpandable(child)) {
 					child.setExpanded(expanded);

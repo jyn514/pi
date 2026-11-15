@@ -314,10 +314,10 @@ export interface ExtensionUIContext {
 	/** Set the current theme by name or Theme object. */
 	setTheme(theme: string | Theme): { success: boolean; error?: string };
 
-	/** Get current tool output expansion state. */
+	/** Get tool output expansion state for the section since the latest compaction. */
 	getToolsExpanded(): boolean;
 
-	/** Set tool output expansion state. */
+	/** Set tool output expansion state since the latest compaction, leaving older entries unchanged. */
 	setToolsExpanded(expanded: boolean): void;
 }
 
