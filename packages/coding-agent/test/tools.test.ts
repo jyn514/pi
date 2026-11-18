@@ -1766,6 +1766,45 @@ describe("edit tool CRLF handling", () => {
 		expect(content).toBe("\uFEFFfirst\r\nREPLACED\r\nthird\r\n");
 	});
 
+	describe.each([
+		{ name: "LF", ending: "\n" },
+		{ name: "CRLF", ending: "\r\n" },
+	])("literal CR in $name files", ({ ending }) => {
+		it.each([
+			{
+				name: "editing another line",
+				original: "# old\nbind alt-e 'hx config.fish\r'\n",
+				oldText: "# old",
+				newText: "# new",
+				expected: "# new\nbind alt-e 'hx config.fish\r'\n",
+			},
+			{
+				name: "editing the same line without selecting the CR",
+				original: "bind alt-e 'hx config.fish\r'\n",
+				oldText: "hx config.fish",
+				newText: "hx other.fish",
+				expected: "bind alt-e 'hx other.fish\r'\n",
+			},
+			{
+				name: "inserting a CR through newText",
+				original: "bind alt-e 'hx config.fish'\n",
+				oldText: "hx config.fish",
+				newText: "hx config.fish\r",
+				expected: "bind alt-e 'hx config.fish\r'\n",
+			},
+		])("should preserve literal CR when $name", async ({ original, oldText, newText, expected }) => {
+			const testFile = join(testDir, "literal-cr.fish");
+			writeFileSync(testFile, original.replace(/\n/g, ending));
+
+			await editTool.execute("test-literal-cr", {
+				path: testFile,
+				edits: [{ oldText, newText }],
+			});
+
+			expect(readFileSync(testFile)).toEqual(Buffer.from(expected.replace(/\n/g, ending)));
+		});
+	});
+
 	it("should preserve CRLF line endings and BOM in multi-edit mode", async () => {
 		const testFile = join(testDir, "bom-crlf-multi.txt");
 		writeFileSync(testFile, "\uFEFFfirst\r\nsecond\r\nthird\r\nfourth\r\n");
