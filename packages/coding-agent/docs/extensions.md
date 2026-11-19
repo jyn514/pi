@@ -1127,7 +1127,7 @@ pi.on("input", async (event, ctx) => {
   // event.source - "interactive" (typed), "rpc" (API), or "extension" (via sendUserMessage)
   // event.streamingBehavior - "steer" | "followUp" | undefined
   //   undefined when idle, "steer" for mid-stream interrupts,
-  //   "followUp" for messages queued until the agent finishes
+  //   "followUp" for queued follow-ups
 
   // Transform: rewrite input before expansion
   if (event.text.startsWith("?quick "))
@@ -1162,7 +1162,7 @@ Transforms chain across handlers. See [input-transform.ts](../examples/extension
 
 ## ExtensionContext
 
-All handlers receive `ctx: ExtensionContext`. Tool `execute()` receives `ExtensionToolContext`, which adds `ctx.tools` and `ctx.executeTool()` (see [Calling Other Tools](#calling-other-tools)). Command handlers receive [`ExtensionCommandContext`](#extensioncommandcontext).
+All handlers receive `ctx: ExtensionContext`. Tool `execute()` receives `ExtensionToolContext`, which adds `ctx.isDirectToolCall`, `ctx.tools`, and `ctx.executeTool()` (see [Yielding to Follow-ups](#yielding-to-follow-ups) and [Calling Other Tools](#calling-other-tools)). Command handlers receive [`ExtensionCommandContext`](#extensioncommandcontext).
 
 ### ctx.ui
 
@@ -1751,7 +1751,7 @@ pi.sendMessage({
 **Options:**
 - `deliverAs` - Delivery mode:
   - `"steer"` (default) - Queues the message while streaming. Delivered after the current assistant turn finishes executing its tool calls, before the next LLM call.
-  - `"followUp"` - Waits for agent to finish. Delivered only when agent has no more tool calls.
+  - `"followUp"` - Waits for the agent to finish, unless a tool [yields to follow-ups](#yielding-to-follow-ups) earlier.
   - `"nextTurn"` - Queued for next user prompt. Does not interrupt or trigger anything.
 - `triggerTurn: true` - If agent is idle, trigger an LLM response immediately. Only applies to `"steer"` and `"followUp"` modes (ignored for `"nextTurn"`). Without it, an idle session stores the message without starting a turn.
 - `triggerTurn: false` while streaming - The message is not steered or queued as a follow-up; it is appended after the current turn ends.
@@ -1781,7 +1781,7 @@ pi.sendUserMessage("/review src/index.ts", { expandPromptTemplates: true });
 **Options:**
 - `deliverAs` - Required when agent is streaming:
   - `"steer"` - Queues the message for delivery after the current assistant turn finishes executing its tool calls
-  - `"followUp"` - Waits for agent to finish all tools
+  - `"followUp"` - Waits for the agent to finish, unless a tool [yields to follow-ups](#yielding-to-follow-ups) earlier.
 - `expandPromptTemplates` - Dispatch extension commands and expand skill commands and prompt templates. Defaults to `false`.
 
 When not streaming, the message is sent immediately and triggers a new turn. When streaming without `deliverAs`, the message is rejected and Pi reports an extension error.
@@ -2888,6 +2888,16 @@ export default function (pi: ExtensionAPI) {
 ```
 
 When `search_tools` adds a match, the model receives the complete updated tool list on the immediately following request.
+
+### Yielding to Follow-ups
+
+A queued follow-up normally waits until the agent finishes its tool loop. A waiting tool can instead return `yieldToFollowUps: true` on a successful result to include follow-ups in the next model request. For example, a direct `wait_agent` can notice queued input, end only its wait, and return this flag so the model receives the prompt immediately after the tool batch finishes.
+
+`ctx.isDirectToolCall` is true when the model calls the tool directly. It is false when another tool calls it through `ctx.executeTool()`, including codemode scripts. A wait that should wake for follow-ups only in direct calls checks `ctx.hasPendingMessages()` when `ctx.isDirectToolCall` is true, and `ctx.hasPendingSteeringMessages()` otherwise.
+
+Pi waits for all sibling calls before selecting input. Steering takes priority; when no steering is selected, Pi selects one follow-up batch using the configured follow-up queue mode. The flag applies to that selection only. Failed or aborted execution does not select follow-ups, and an explicit turn-ending decision still takes precedence. The flag is runtime-only and is not stored in the tool-result message.
+
+Nested results have this flag removed before reaching their caller, so forwarding a nested result cannot cause a yield. The enclosing tool must opt in on its own result.
 
 ### Assistant output from tools
 

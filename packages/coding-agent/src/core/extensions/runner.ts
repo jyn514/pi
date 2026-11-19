@@ -400,6 +400,7 @@ export class ExtensionRunner {
 	private resolveSkillCommandFn: NonNullable<ExtensionContextActions["resolveSkillCommand"]> = () => undefined;
 	private getSystemPromptOptionsFn: () => BuildSystemPromptOptions = () =>
 		normalizeBuildSystemPromptOptions({ cwd: this.cwd });
+	private isDirectToolCallFn: ExtensionContextActions["isDirectToolCall"];
 	private executeToolFn: ExtensionContextActions["executeTool"];
 	private queueAssistantOutputFn: ExtensionContextActions["queueAssistantOutput"];
 	private getCallableToolsFn: () => readonly AgentTool[] = () => [];
@@ -482,6 +483,7 @@ export class ExtensionRunner {
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
 		this.resolveSkillCommandFn = contextActions.resolveSkillCommand ?? (() => undefined);
 		this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
+		this.isDirectToolCallFn = contextActions.isDirectToolCall;
 		this.executeToolFn = contextActions.executeTool;
 		this.queueAssistantOutputFn = contextActions.queueAssistantOutput;
 		this.getCallableToolsFn = contextActions.getCallableTools ?? (() => []);
@@ -1060,6 +1062,7 @@ export class ExtensionRunner {
 		};
 		// createContext() returns a fresh object, so adding properties does not affect other contexts.
 		return Object.defineProperties(this.createContext() as ExtensionToolContext, {
+			isDirectToolCall: { value: this.isDirectToolCallFn?.(toolCallId) ?? false },
 			sendCommentary: { value: (message: string) => queueAssistantOutput(message, false) },
 			finishTurn: { value: (message: string) => queueAssistantOutput(message, true) },
 			tools: {

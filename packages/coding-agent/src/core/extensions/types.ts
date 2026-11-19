@@ -415,6 +415,8 @@ export interface ExecuteToolOptions {
  * created with `createBashTool()` and run in a plain `Agent` or called directly, gets no context.
  */
 export interface ExtensionToolContext extends ExtensionContext {
+	/** True for a model-issued call; false for calls made through another tool's executeTool(). */
+	readonly isDirectToolCall: boolean;
 	/** Tools {@link executeTool} can call. */
 	readonly tools: readonly AgentTool[];
 	/**
@@ -2359,6 +2361,8 @@ export interface ExtensionContextActions {
 	getSystemPrompt: () => string;
 	resolveSkillCommand?: (text: string) => ResolvedSkillCommand | undefined;
 	getSystemPromptOptions?: () => BuildSystemPromptOptions;
+	/** Identifies model-issued calls when creating their tool execution contexts. */
+	isDirectToolCall?: (toolCallId: string) => boolean;
 	/** Backs `ExtensionToolContext.executeTool()`. Without it, nested calls fail. */
 	executeTool?: (
 		callerId: string,

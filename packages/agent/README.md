@@ -468,7 +468,7 @@ When steering messages are detected after a turn completes:
 2. Steering messages are injected
 3. The LLM responds on the next turn
 
-Follow-up messages are checked only when there are no more tool calls and no steering messages. If any are queued, they are injected and another turn runs.
+Follow-up messages are normally checked when there are no more tool calls and no steering messages. A successful tool result can request an earlier check after its batch completes with [`yieldToFollowUps: true`](#yielding-to-follow-ups). If any follow-ups are selected, they are injected and another turn runs.
 
 ## Custom Message Types
 
@@ -553,6 +553,10 @@ execute: async (toolCallId, params, signal, onUpdate) => {
 Thrown errors are caught by the agent and reported to the LLM as tool errors with `isError: true`.
 
 Return `terminate: true` from `execute()`, a blocked `beforeToolCall`, or `afterToolCall` to hint that the agent should stop after the current tool batch. This only takes effect when every finalized tool result in the batch is terminating. The hint is runtime-only; emitted `toolResult` transcript messages remain standard LLM tool results.
+
+### Yielding to Follow-ups
+
+A successful tool result can return `yieldToFollowUps: true` to include queued follow-ups in the next model request instead of waiting for the tool loop to finish. The loop first completes every sibling tool call and records its result. It then selects steering, or, when none is selected, one follow-up batch using the configured queue mode. The yield applies to that selection only; it does not cancel other tools or change later scheduling. Failed or aborted execution does not select follow-ups, and an explicit `finishTurn` decision to end still takes precedence. The flag is runtime-only and is not stored in tool-result messages.
 
 ### MCP and Codemode
 

@@ -280,6 +280,7 @@ async function runLoop(
 			const toolCalls = message.content.filter((c) => c.type === "toolCall");
 
 			const toolResults: ToolResultMessage[] = [];
+			let yieldToFollowUps = false;
 			hasMoreToolCalls = false;
 			if (toolCalls.length > 0) {
 				// A "length" stop means the output was cut off by the token limit, so
@@ -291,6 +292,7 @@ async function runLoop(
 						: await executeToolCalls(currentContext, message, config, signal, emit);
 				toolResults.push(...executedToolBatch.messages);
 				hasMoreToolCalls = !executedToolBatch.terminate;
+				yieldToFollowUps = executedToolBatch.yieldToFollowUps;
 
 				for (const result of toolResults) {
 					currentContext.messages.push(result);
@@ -315,6 +317,9 @@ async function runLoop(
 
 			explicitContinuation = decision?.action === "continue";
 			pendingMessages = (await config.getSteeringMessages?.()) || [];
+			if (yieldToFollowUps && pendingMessages.length === 0 && !signal?.aborted) {
+				pendingMessages = (await config.getFollowUpMessages?.()) || [];
+			}
 			if (hasMoreToolCalls || pendingMessages.length > 0) {
 				explicitContinuation = false;
 			}
@@ -531,7 +536,7 @@ async function failToolCallsFromTruncatedMessage(
 		await emitToolResultMessage(toolResultMessage, emit);
 		messages.push(toolResultMessage);
 	}
-	return { messages, terminate: false };
+	return { messages, terminate: false, yieldToFollowUps: false };
 }
 
 /**
@@ -557,6 +562,7 @@ async function executeToolCalls(
 type ExecutedToolCallBatch = {
 	messages: ToolResultMessage[];
 	terminate: boolean;
+	yieldToFollowUps: boolean;
 };
 
 async function executeToolCallsSequential(
@@ -612,6 +618,7 @@ async function executeToolCallsSequential(
 	return {
 		messages,
 		terminate: shouldTerminateToolBatch(finalizedCalls),
+		yieldToFollowUps: finalizedCalls.some((call) => !call.isError && call.result.yieldToFollowUps === true),
 	};
 }
 
@@ -688,6 +695,7 @@ async function executeToolCallsParallel(
 	return {
 		messages,
 		terminate: shouldTerminateToolBatch(orderedFinalizedCalls),
+		yieldToFollowUps: orderedFinalizedCalls.some((call) => !call.isError && call.result.yieldToFollowUps === true),
 	};
 }
 

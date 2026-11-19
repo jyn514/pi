@@ -234,6 +234,11 @@ export class NestedToolCallRunner {
 			release?.();
 		}
 
+		// A nested wait must not change the enclosing script's queue scheduling, even if it forwards the result.
+		if (outcome.result.yieldToFollowUps !== undefined) {
+			const { yieldToFollowUps: _yieldToFollowUps, ...result } = outcome.result;
+			outcome = { ...outcome, result };
+		}
 		scope.recorder.finish(record, outcome.isError, textOf(outcome.result));
 		// Nested results are not persisted, so their usage is only counted through the recorder.
 		if (outcome.result.usage) scope.recorder.addUsage(outcome.result.usage);

@@ -4369,6 +4369,7 @@ export class AgentSession {
 				getSystemPrompt: () => this.systemPrompt,
 				resolveSkillCommand: (text) => this.resolveSkillCommand(text),
 				getSystemPromptOptions: () => this._baseSystemPromptOptions,
+				isDirectToolCall: (toolCallId) => this.agent.state.pendingToolCalls.has(toolCallId),
 				executeTool: (callerId, name, args, options) => this._executeNestedToolCall(callerId, name, args, options),
 				queueAssistantOutput: (toolCallId, message, finish, signal) =>
 					this._queueAssistantOutput(toolCallId, message, finish, signal),

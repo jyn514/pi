@@ -302,7 +302,8 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	/**
 	 * Returns follow-up messages to process after the agent would otherwise stop.
 	 *
-	 * Called when the agent has no more tool calls and no steering messages.
+	 * Called when the agent has no more tool calls and no steering messages, or after a successful
+	 * model-issued tool result requests `yieldToFollowUps` and no steering messages were selected.
 	 * If messages are returned, they're added to the context and the agent
 	 * continues with another turn.
 	 *
@@ -450,6 +451,13 @@ export interface AgentToolResult<T = JsonValue | undefined> {
 	 * Early termination only happens when every finalized tool result in the batch sets this to true.
 	 */
 	terminate?: boolean;
+	/**
+	 * Let queued follow-ups enter the next model request after this tool batch completes.
+	 * Only successful model-issued results participate; steering takes priority. The request applies
+	 * once, uses the configured follow-up queue mode, and does not cancel sibling tools or end the run.
+	 * This control flag is not part of the persisted tool-result message.
+	 */
+	yieldToFollowUps?: boolean;
 }
 
 /** Final outcome of a tool call after hooks ran. */
